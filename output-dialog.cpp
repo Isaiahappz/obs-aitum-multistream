@@ -275,9 +275,10 @@ obs_data_t *OutputDialog::getService(std::string serviceName)
 OutputDialog::OutputDialog(QDialog *parent, QStringList _otherNames) : QDialog(parent), otherNames(_otherNames)
 {
 	// Load the services from rtmp-services plugin
-	auto servicesPath = obs_module_get_config_path(obs_get_module("rtmp-services"), "services.json");
-	auto absolutePath = os_get_abs_path_ptr(servicesPath);
-	auto allData = obs_data_create_from_json_file(absolutePath);
+	auto module = obs_get_module("rtmp-services");
+	auto servicesPath = module ? obs_module_get_config_path(module, "services.json") : nullptr;
+	auto absolutePath = servicesPath ? os_get_abs_path_ptr(servicesPath) : nullptr;
+	auto allData = absolutePath ? obs_data_create_from_json_file(absolutePath) : nullptr;
 
 	servicesData = obs_data_get_array(allData, "services");
 
