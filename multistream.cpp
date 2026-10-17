@@ -36,10 +36,9 @@ bool version_info_downloaded(void *param, struct file_download_data *file)
 
 	QMetaObject::invokeMethod(multistream_dock, "ApiInfo", Q_ARG(QString, QString::fromUtf8((const char *)file->buffer.array)));
 
-	if (version_update_info) {
-		update_info_destroy(version_update_info);
-		version_update_info = nullptr;
-	}
+	// Deliberately not destroyed here: this callback runs on the updater's
+	// own worker thread, and update_info_destroy() joins that thread.
+	// obs_module_unload() owns the handle and tears it down.
 	return true;
 }
 
