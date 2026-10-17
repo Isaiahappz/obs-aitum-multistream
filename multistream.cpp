@@ -130,6 +130,26 @@ void MultistreamDock::outputButtonStyle(QPushButton *button)
 	button->setIcon(button->isChecked() ? streamActiveIcon : streamInactiveIcon);
 }
 
+// Per output status line, kept next to the output's own start/stop button so a
+// failure is visible in the dock without a dialog. An empty text hides it.
+void MultistreamDock::setOutputStatus(QPushButton *button, const QString &text, bool isError)
+{
+	if (!button) {
+		return;
+	}
+	auto group = button->parentWidget();
+	if (!group) {
+		return;
+	}
+	auto label = group->findChild<QLabel *>(QStringLiteral("outputStatus"));
+	if (!label) {
+		return;
+	}
+	label->setStyleSheet(isError ? QString("padding: 0px; color: rgb(255,110,110);") : QString("padding: 0px;"));
+	label->setText(text);
+	label->setVisible(!text.isEmpty());
+}
+
 // Common styling things here
 auto canvasGroupStyle = QString("padding: 0px 0px 0px 0px;");                          // Main Canvas, Vertical Canvas
 auto canvasGroupHeaderStyle = QString("padding: 0px 0px 0px 0px; font-weight: bold;"); // header of each group
@@ -778,6 +798,13 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 	l2->addWidget(streamButton);
 	streamLayout->addLayout(l2);
 
+	auto statusLabel = new QLabel;
+	statusLabel->setObjectName(QStringLiteral("outputStatus"));
+	statusLabel->setWordWrap(true);
+	statusLabel->setStyleSheet(QString("padding: 0px;"));
+	statusLabel->setVisible(false);
+	streamLayout->addWidget(statusLabel);
+
 	streamGroup->setLayout(streamLayout);
 
 	if (vertical) {
@@ -1084,7 +1111,29 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	obs_output_set_video_encoder(output, venc);
 	obs_output_set_audio_encoder(output, aenc, 0);
 
-	obs_output_start(output);
+	if (!obs_output_start(output)) {
+		// A refused start is silent otherwise: the button would latch on
+		// and the stream would simply never reach the platform.
+		const char *last_error = obs_output_get_last_error(output);
+		blog(LOG_WARNING, "[Aitum Multistream] failed to start output '%s': %s", name,
+		     (last_error && *last_error) ? last_error : "no error reported");
+
+		auto reason = QString::fromUtf8((last_error && *last_error) ? last_error
+									   : obs_module_text("OutputStatusUnknownError"));
+		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusStartFailed")).arg(reason), true);
+
+		signal_handler_disconnect(signal, "start", stream_output_start, this);
+		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
+		obs_output_release(output);
+		obs_service_release(service);
+
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
+				     QString::fromUtf8(obs_module_text("OutputStartFailed"))
+					     .arg(QString::fromUtf8(name), reason));
+		return false;
+	}
+
+	setOutputStatus(streamButton, QString(), false);
 
 	outputs.push_back({obs_data_get_string(settings, "name"), output, streamButton});
 

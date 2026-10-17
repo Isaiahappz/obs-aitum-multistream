@@ -53,6 +53,8 @@ private:
 
 	void outputButtonStyle(QPushButton *button);
 
+	void setOutputStatus(QPushButton *button, const QString &text, bool isError);
+
 	void storeMainStreamEncoders();
 
 	void AskUpdate();
