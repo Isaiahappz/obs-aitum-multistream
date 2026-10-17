@@ -1105,21 +1105,23 @@ void MultistreamDock::stream_output_start(void *data, calldata_t *calldata)
 		obs_websocket_vendor_emit_event(md->vendor, "output_started", d);
 		obs_data_release(d);
 	}
-	for (auto it = md->outputs.begin(); it != md->outputs.end(); it++) {
-		if (std::get<obs_output_t *>(*it) != output) {
-			continue;
-		}
-		auto button = std::get<QPushButton *>(*it);
-		if (!button->isChecked()) {
-			QMetaObject::invokeMethod(
-				button,
-				[button, md] {
+	// This signal arrives on the output's own thread, while the UI thread
+	// iterates and mutates `outputs`. Do every access on the UI thread.
+	QMetaObject::invokeMethod(
+		md,
+		[md, output] {
+			for (auto it = md->outputs.begin(); it != md->outputs.end(); it++) {
+				if (std::get<obs_output_t *>(*it) != output) {
+					continue;
+				}
+				auto button = std::get<QPushButton *>(*it);
+				if (!button->isChecked()) {
 					button->setChecked(true);
 					md->outputButtonStyle(button);
-				},
-				Qt::QueuedConnection);
-		}
-	}
+				}
+			}
+		},
+		Qt::QueuedConnection);
 }
 
 void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
@@ -1135,26 +1137,30 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 		obs_websocket_vendor_emit_event(md->vendor, "output_stopped", d);
 		obs_data_release(d);
 	}
-	for (auto it = md->outputs.begin(); it != md->outputs.end(); it++) {
-		if (std::get<obs_output_t *>(*it) != output) {
-			continue;
-		}
-		auto button = std::get<QPushButton *>(*it);
-		if (button->isChecked()) {
-			QMetaObject::invokeMethod(
-				button,
-				[button, md] {
+	// This signal arrives on the output's own thread. Erasing from
+	// `outputs` here raced the UI thread, which iterates the same vector
+	// from the 500ms timer, from StartOutput() and from the destructor, so
+	// the lookup, the erase and the release all happen on the UI thread.
+	QMetaObject::invokeMethod(
+		md,
+		[md, output] {
+			for (auto it = md->outputs.begin(); it != md->outputs.end(); it++) {
+				if (std::get<obs_output_t *>(*it) != output) {
+					continue;
+				}
+				auto button = std::get<QPushButton *>(*it);
+				if (button->isChecked()) {
 					button->setChecked(false);
 					md->outputButtonStyle(button);
-				},
-				Qt::QueuedConnection);
-		}
-		if (!md->exiting) {
-			QMetaObject::invokeMethod(button, [output] { obs_output_release(output); }, Qt::QueuedConnection);
-		}
-		md->outputs.erase(it);
-		break;
-	}
+				}
+				md->outputs.erase(it);
+				if (!md->exiting) {
+					obs_output_release(output);
+				}
+				break;
+			}
+		},
+		Qt::QueuedConnection);
 	//const char *last_error = (const char *)calldata_ptr(calldata, "last_error");
 }
 
