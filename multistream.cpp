@@ -12,6 +12,7 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <util/config-file.h>
+#include <util/dstr.h>
 #include <util/platform.h>
 
 extern "C" {
@@ -162,6 +163,16 @@ void showVerticalWarning(QVBoxLayout *verticalLayout)
 config_t *get_user_config(void)
 {
 	return obs_frontend_get_user_config();
+}
+
+// True when the endpoint uses a streaming scheme that is never WHIP.
+static bool is_rtmp_like_url(const char *url)
+{
+	if (!url) {
+		return false;
+	}
+	return astrcmpi_n(url, "rtmp://", 7) == 0 || astrcmpi_n(url, "rtmps://", 8) == 0 ||
+	       astrcmpi_n(url, "ftl://", 6) == 0;
 }
 
 MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
@@ -1006,7 +1017,10 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			obs_data_set_string(settings, "stream_server", server);
 		}
 	}
-	bool whip = strstr(server, "whip") != nullptr;
+	// Only an endpoint that is not RTMP/RTMPS/FTL may be treated as WHIP: a
+	// "whip" substring inside an RTMP hostname or path must not silently
+	// switch the service type and send the stream key as a bearer token.
+	bool whip = !is_rtmp_like_url(server) && strstr(server, "whip") != nullptr;
 	auto s = obs_data_create();
 	obs_data_set_string(s, "server", server);
 	auto key = obs_data_get_string(settings, "stream_key");
