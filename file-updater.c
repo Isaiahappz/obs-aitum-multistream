@@ -28,6 +28,10 @@
 #define CONNECT_TIMEOUT_SEC 10L
 #define TRANSFER_TIMEOUT_SEC 30L
 
+/* The endpoint returns a small JSON document; anything far larger is
+ * either a mistake or hostile. */
+#define MAX_DOWNLOAD_BYTES ((size_t)1 * 1024 * 1024)
+
 #define warn(msg, ...) blog(LOG_WARNING, "%s" msg, info->log_prefix, ##__VA_ARGS__)
 #define info(msg, ...) blog(LOG_WARNING, "%s" msg, info->log_prefix, ##__VA_ARGS__)
 
@@ -71,6 +75,14 @@ static size_t http_write(void *ptr, size_t size, size_t nmemb, void *uinfo)
 {
 	size_t total = size * nmemb;
 	struct update_info *info = (struct update_info *)uinfo;
+
+	/* Returning a short count aborts the transfer, which keeps a very
+	 * large or endless response from growing the buffer without bound. */
+	if (info->file_data.num + total > MAX_DOWNLOAD_BYTES) {
+		warn("Remote update of URL \"%s\" aborted: response exceeds %zu bytes", info->url,
+		     (size_t)MAX_DOWNLOAD_BYTES);
+		return 0;
+	}
 
 	if (total)
 		da_push_back_array(info->file_data, ptr, total);
