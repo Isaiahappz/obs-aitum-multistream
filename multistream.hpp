@@ -5,6 +5,7 @@
 #include <obs.h>
 #include <obs-frontend-api.h>
 #include <QFrame>
+#include <QGroupBox>
 #include <QPushButton>
 #include <QString>
 #include <QTimer>
@@ -23,6 +24,7 @@ private:
 	QVBoxLayout *mainLayout = nullptr;
 	QVBoxLayout *mainCanvasLayout = nullptr;
 	QVBoxLayout *mainCanvasOutputLayout = nullptr;
+	QGroupBox *verticalCanvasGroup = nullptr;
 	QVBoxLayout *verticalCanvasLayout = nullptr;
 	QVBoxLayout *verticalCanvasOutputLayout = nullptr;
 	QPushButton *mainStreamButton = nullptr;

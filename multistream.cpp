@@ -205,26 +205,6 @@ auto outputGroupStyle = QString("background-color: %1; padding: 0px;")
 
 auto outputPlatformIconSize = 36;
 
-// For showing warning for no vertical integration
-void showVerticalWarning(QVBoxLayout *verticalLayout)
-{
-	auto verticalWarning = new QWidget;
-	verticalWarning->setContentsMargins(0, 0, 0, 0);
-
-	auto verticalWarningLayout = new QVBoxLayout;
-	verticalWarningLayout->setContentsMargins(0, 0, 0, 0);
-
-	auto label = new QLabel(QString::fromUtf8(obs_module_text("NoVerticalWarning")));
-	label->setStyleSheet(QString("padding: 0px;"));
-	label->setWordWrap(true);
-	label->setTextFormat(Qt::RichText);
-	label->setOpenExternalLinks(true);
-	verticalWarningLayout->addWidget(label);
-	verticalWarning->setLayout(verticalWarningLayout);
-
-	verticalLayout->addWidget(verticalWarning);
-}
-
 config_t *get_user_config(void)
 {
 	return obs_frontend_get_user_config();
@@ -379,9 +359,12 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 
 	tl->addWidget(mainCanvasGroup);
 
-	// VERTICAL
-	auto verticalCanvasGroup = new QGroupBox;
+	// VERTICAL. Hidden until Aitum Vertical answers its proc handler: an
+	// empty section headed "Vertical Canvas" means nothing to someone who
+	// does not have that plugin and is not meant to.
+	verticalCanvasGroup = new QGroupBox;
 	verticalCanvasGroup->setStyleSheet(canvasGroupStyle);
+	verticalCanvasGroup->setVisible(false);
 
 	verticalCanvasLayout = new QVBoxLayout;
 	verticalCanvasGroup->setLayout(verticalCanvasLayout);
@@ -1467,16 +1450,17 @@ void MultistreamDock::stream_output_reconnect_success(void *data, calldata_t *ca
 
 void MultistreamDock::LoadVerticalOutputs(bool firstLoad)
 {
+	UNUSED_PARAMETER(firstLoad);
 	auto ph = obs_get_proc_handler();
 	struct calldata cd;
 	calldata_init(&cd);
 	if (!proc_handler_call(ph, "aitum_vertical_get_stream_settings", &cd)) {
-		if (firstLoad) {                                         // only display warning on first load
-			showVerticalWarning(verticalCanvasOutputLayout); // show warning
-		}
+		// Not installed, or too old to answer.
+		verticalCanvasGroup->setVisible(false);
 		calldata_free(&cd);
 		return;
 	}
+	verticalCanvasGroup->setVisible(true);
 
 	if (vertical_outputs) {
 		obs_data_array_release(vertical_outputs);
