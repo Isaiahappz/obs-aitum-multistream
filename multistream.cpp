@@ -212,6 +212,17 @@ static bool is_rtmp_like_url(const char *url)
 	       astrcmpi_n(url, "ftl://", 6) == 0;
 }
 
+// Outputs saved by older versions of the plugin keep the endpoint and the key
+// under "server" and "key" rather than "stream_server" and "stream_key".
+static const char *get_output_setting(obs_data_t *settings, const char *key, const char *legacy_key)
+{
+	auto value = obs_data_get_string(settings, key);
+	if (!value || !*value) {
+		value = obs_data_get_string(settings, legacy_key);
+	}
+	return value;
+}
+
 MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 {
 	// Main layout
@@ -920,6 +931,28 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		return false;
 	}
 
+	const char *name = obs_data_get_string(settings, "name");
+
+	// Checked before anything is created, and before the operator is asked
+	// to confirm: an output with no endpoint or no key can only produce a
+	// connect attempt that fails seconds later for a less obvious reason.
+	auto configured_server = get_output_setting(settings, "stream_server", "server");
+	if (!configured_server || !*configured_server) {
+		blog(LOG_WARNING, "[Aitum Multistream] refusing to start output '%s': no stream server is configured", name);
+		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoServer")), true);
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
+				     QString::fromUtf8(obs_module_text("OutputNoServer")).arg(QString::fromUtf8(name)));
+		return false;
+	}
+	auto configured_key = get_output_setting(settings, "stream_key", "key");
+	if (!configured_key || !*configured_key) {
+		blog(LOG_WARNING, "[Aitum Multistream] refusing to start output '%s': no stream key is configured", name);
+		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoKey")), true);
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
+				     QString::fromUtf8(obs_module_text("OutputNoKey")).arg(QString::fromUtf8(name)));
+		return false;
+	}
+
 	bool warnBeforeStreamStart = config_get_bool(get_user_config(), "BasicWindow", "WarnBeforeStartingStream");
 	if (warnBeforeStreamStart && isVisible()) {
 		auto button = QMessageBox::question(this, QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStart.Title")),
@@ -929,8 +962,6 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			return false;
 		}
 	}
-
-	const char *name = obs_data_get_string(settings, "name");
 	for (auto it = outputs.begin(); it != outputs.end(); it++) {
 		if (std::get<std::string>(*it) != name) {
 			continue;
