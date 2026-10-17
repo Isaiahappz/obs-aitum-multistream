@@ -150,6 +150,24 @@ void MultistreamDock::setOutputStatus(QPushButton *button, const QString &text, 
 	label->setVisible(!text.isEmpty());
 }
 
+// Same, for a status that arrives on an output's own thread: the `outputs`
+// vector and every widget in it may only be touched on the UI thread.
+void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text, bool isError)
+{
+	QMetaObject::invokeMethod(
+		this,
+		[this, output, text, isError] {
+			for (auto it = outputs.begin(); it != outputs.end(); it++) {
+				if (std::get<obs_output_t *>(*it) != output) {
+					continue;
+				}
+				setOutputStatus(std::get<QPushButton *>(*it), text, isError);
+				break;
+			}
+		},
+		Qt::QueuedConnection);
+}
+
 // Common styling things here
 auto canvasGroupStyle = QString("padding: 0px 0px 0px 0px;");                          // Main Canvas, Vertical Canvas
 auto canvasGroupHeaderStyle = QString("padding: 0px 0px 0px 0px; font-weight: bold;"); // header of each group
@@ -525,6 +543,8 @@ MultistreamDock::~MultistreamDock()
 		signal_handler_t *signal = obs_output_get_signal_handler(old);
 		signal_handler_disconnect(signal, "start", stream_output_start, this);
 		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
+		signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
+		signal_handler_disconnect(signal, "reconnect_success", stream_output_reconnect_success, this);
 		auto service = obs_output_get_service(old);
 		if (obs_output_active(old)) {
 			obs_output_force_stop(old);
@@ -919,6 +939,8 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		signal_handler_t *signal = obs_output_get_signal_handler(old);
 		signal_handler_disconnect(signal, "start", stream_output_start, this);
 		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
+		signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
+		signal_handler_disconnect(signal, "reconnect_success", stream_output_reconnect_success, this);
 		auto service = obs_output_get_service(old);
 		if (obs_output_active(old)) {
 			obs_output_force_stop(old);
@@ -1100,8 +1122,12 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	signal_handler_t *signal = obs_output_get_signal_handler(output);
 	signal_handler_disconnect(signal, "start", stream_output_start, this);
 	signal_handler_disconnect(signal, "stop", stream_output_stop, this);
+	signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
+	signal_handler_disconnect(signal, "reconnect_success", stream_output_reconnect_success, this);
 	signal_handler_connect(signal, "start", stream_output_start, this);
 	signal_handler_connect(signal, "stop", stream_output_stop, this);
+	signal_handler_connect(signal, "reconnect", stream_output_reconnect, this);
+	signal_handler_connect(signal, "reconnect_success", stream_output_reconnect_success, this);
 
 	//for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
 	//auto venc = obs_output_get_video_encoder2(main_output, 0);
@@ -1124,6 +1150,8 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 
 		signal_handler_disconnect(signal, "start", stream_output_start, this);
 		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
+		signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
+		signal_handler_disconnect(signal, "reconnect_success", stream_output_reconnect_success, this);
 		obs_output_release(output);
 		obs_service_release(service);
 
@@ -1140,10 +1168,42 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	return true;
 }
 
+// libobs reports why an output stopped as a numeric code; spell it out so the
+// log and the dock say something an operator can act on.
+static const char *output_stop_code_text(long long code)
+{
+	switch (code) {
+	case OBS_OUTPUT_SUCCESS:
+		return "stopped normally";
+	case OBS_OUTPUT_BAD_PATH:
+		return "the server URL was rejected";
+	case OBS_OUTPUT_CONNECT_FAILED:
+		return "could not connect to the server";
+	case OBS_OUTPUT_INVALID_STREAM:
+		return "the server refused the stream, check the server and stream key";
+	case OBS_OUTPUT_ERROR:
+		return "a streaming error occurred";
+	case OBS_OUTPUT_DISCONNECTED:
+		return "disconnected from the server";
+	case OBS_OUTPUT_UNSUPPORTED:
+		return "the output does not support this configuration";
+	case OBS_OUTPUT_NO_SPACE:
+		return "out of disk space";
+	case OBS_OUTPUT_ENCODE_ERROR:
+		return "the encoder failed";
+	case OBS_OUTPUT_HDR_DISABLED:
+		return "HDR is not supported by this service";
+	default:
+		return "stopped for an unknown reason";
+	}
+}
+
 void MultistreamDock::stream_output_start(void *data, calldata_t *calldata)
 {
 	auto md = (MultistreamDock *)data;
 	auto output = (obs_output_t *)calldata_ptr(calldata, "output");
+	auto output_name = obs_output_get_name(output);
+	blog(LOG_INFO, "[Aitum Multistream] output '%s' started", output_name ? output_name : "");
 	if (md->vendor) {
 		auto d = obs_data_create();
 		auto name = obs_output_get_name(output);
@@ -1167,6 +1227,7 @@ void MultistreamDock::stream_output_start(void *data, calldata_t *calldata)
 					button->setChecked(true);
 					md->outputButtonStyle(button);
 				}
+				md->setOutputStatus(button, QString(), false);
 			}
 		},
 		Qt::QueuedConnection);
@@ -1176,6 +1237,17 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 {
 	auto md = (MultistreamDock *)data;
 	auto output = (obs_output_t *)calldata_ptr(calldata, "output");
+	auto code = calldata_int(calldata, "code");
+	auto last_error = calldata_string(calldata, "last_error");
+	auto output_name = obs_output_get_name(output);
+
+	// The calldata is only valid for the duration of this call, so the
+	// reason has to be copied before anything is queued.
+	auto reason = QString::fromUtf8((last_error && *last_error) ? last_error : output_stop_code_text(code));
+
+	blog(code == OBS_OUTPUT_SUCCESS ? LOG_INFO : LOG_WARNING, "[Aitum Multistream] output '%s' stopped (code %d): %s",
+	     output_name ? output_name : "", (int)code, reason.toUtf8().constData());
+
 	if (md->vendor) {
 		auto d = obs_data_create();
 		auto name = obs_output_get_name(output);
@@ -1191,7 +1263,7 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 	// the lookup, the erase and the release all happen on the UI thread.
 	QMetaObject::invokeMethod(
 		md,
-		[md, output] {
+		[md, output, code, reason] {
 			for (auto it = md->outputs.begin(); it != md->outputs.end(); it++) {
 				if (std::get<obs_output_t *>(*it) != output) {
 					continue;
@@ -1201,6 +1273,14 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 					button->setChecked(false);
 					md->outputButtonStyle(button);
 				}
+				// The row outlives the output, so the reason for an
+				// unexpected stop stays visible in the dock.
+				md->setOutputStatus(button,
+						    code == OBS_OUTPUT_SUCCESS
+							    ? QString()
+							    : QString::fromUtf8(obs_module_text("OutputStatusStopped"))
+								      .arg(reason),
+						    code != OBS_OUTPUT_SUCCESS);
 				md->outputs.erase(it);
 				if (!md->exiting) {
 					obs_output_release(output);
@@ -1209,7 +1289,31 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 			}
 		},
 		Qt::QueuedConnection);
-	//const char *last_error = (const char *)calldata_ptr(calldata, "last_error");
+}
+
+void MultistreamDock::stream_output_reconnect(void *data, calldata_t *calldata)
+{
+	auto md = (MultistreamDock *)data;
+	auto output = (obs_output_t *)calldata_ptr(calldata, "output");
+	auto timeout = calldata_int(calldata, "timeout_sec");
+	auto output_name = obs_output_get_name(output);
+	auto last_error = obs_output_get_last_error(output);
+
+	blog(LOG_WARNING, "[Aitum Multistream] output '%s' lost its connection, retrying in %d second(s): %s",
+	     output_name ? output_name : "", (int)timeout, (last_error && *last_error) ? last_error : "no error reported");
+
+	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnecting")).arg((int)timeout), true);
+}
+
+void MultistreamDock::stream_output_reconnect_success(void *data, calldata_t *calldata)
+{
+	auto md = (MultistreamDock *)data;
+	auto output = (obs_output_t *)calldata_ptr(calldata, "output");
+	auto output_name = obs_output_get_name(output);
+
+	blog(LOG_INFO, "[Aitum Multistream] output '%s' reconnected", output_name ? output_name : "");
+
+	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnected")), false);
 }
 
 void MultistreamDock::ApiInfo(QString info)
