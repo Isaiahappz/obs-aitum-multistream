@@ -230,6 +230,26 @@ static const char *get_output_setting(obs_data_t *settings, const char *key, con
 	return value;
 }
 
+// The service OBS streams to can be changed in OBS's own settings at any time,
+// so the built-in stream row follows it: the platform's name and logo when the
+// endpoint is one we recognise, and a neutral "Main stream" otherwise.
+void MultistreamDock::UpdateMainStreamPlatform()
+{
+	auto service = obs_frontend_get_streaming_service();
+	auto url = QString::fromUtf8(service ? obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_SERVER_URL) : "");
+	if (mainPlatformShown && url == mainPlatformUrl) {
+		return;
+	}
+	mainPlatformUrl = url;
+	mainPlatformShown = true;
+
+	mainPlatformIconLabel->setPixmap(
+		ConfigUtils::getPlatformIconFromEndpoint(url).pixmap(outputPlatformIconSize, outputPlatformIconSize));
+
+	auto platform = ConfigUtils::getPlatformNameFromEndpoint(url);
+	mainStreamLabel->setText(platform.isEmpty() ? QString::fromUtf8(obs_module_text("MainStream")) : platform);
+}
+
 MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 {
 	// Main layout
@@ -271,17 +291,19 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 
 	auto l2 = new QHBoxLayout;
 
-	// Label for built in stream
-	auto bisHeaderLabel = new QLabel(QString::fromUtf8(obs_module_text("BuiltinStream")));
-	bisHeaderLabel->setStyleSheet(outputTitleStyle);
+	// The row is named after whichever service OBS's own stream is pointed
+	// at, not after the plumbing: whoever is running the service is looking
+	// for "YouTube", not "Built-in stream". Both the name and the icon are
+	// filled in by UpdateMainStreamPlatform and kept current from the timer.
+	mainStreamLabel = new QLabel;
+	mainStreamLabel->setStyleSheet(outputTitleStyle);
 
-	// blank because we're pulling settings through from bis later
 	mainPlatformIconLabel = new QLabel;
-	auto platformIcon = ConfigUtils::getPlatformIconFromEndpoint(QString::fromUtf8(""));
-	mainPlatformIconLabel->setPixmap(platformIcon.pixmap(outputPlatformIconSize, outputPlatformIconSize));
 
 	l2->addWidget(mainPlatformIconLabel);
-	l2->addWidget(bisHeaderLabel, 1);
+	l2->addWidget(mainStreamLabel, 1);
+
+	UpdateMainStreamPlatform();
 
 	mainStreamButton = new QPushButton;
 	mainStreamButton->setObjectName(QStringLiteral("canvasStream"));
@@ -466,14 +488,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 			}
 		}
 
-		auto service = obs_frontend_get_streaming_service();
-		auto url = QString::fromUtf8(service ? obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_SERVER_URL)
-						     : "");
-		if (url != mainPlatformUrl) {
-			mainPlatformUrl = url;
-			mainPlatformIconLabel->setPixmap(ConfigUtils::getPlatformIconFromEndpoint(url).pixmap(
-				outputPlatformIconSize, outputPlatformIconSize));
-		}
+		UpdateMainStreamPlatform();
 
 		int idx = 0;
 		while (auto item = mainCanvasOutputLayout->itemAt(idx++)) {

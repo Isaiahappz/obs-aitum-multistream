@@ -23,6 +23,8 @@ public:
 	static void updateButtonStyles(QPushButton *defaultButton, QPushButton *customButton, int activeIndex);
 
 	static QIcon getPlatformIconFromEndpoint(QString endpoint);
+	// The platform's own name for the same endpoint, empty when unrecognised.
+	static QString getPlatformNameFromEndpoint(QString endpoint);
 
 	// Facebook wants a keyframe at least every 2 seconds.
 	static bool isFacebookEndpoint(QString endpoint);

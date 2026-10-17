@@ -101,28 +101,48 @@ void ConfigUtils::updateButtonStyles(QPushButton *defaultButton, QPushButton *cu
 	customButton->setProperty("unselected", activeIndex != 1 ? true : false);
 }
 
-// Platform icons deciphered from endpoints
-QIcon ConfigUtils::getPlatformIconFromEndpoint(QString endpoint)
+// Platform identity deciphered from endpoints. The icon and the name come off
+// the same table, so a row can never show one platform's logo beside another's
+// name.
+namespace {
+struct Platform {
+	const char *icon;
+	const char *name; // nullptr when the endpoint belongs to nothing we know
+};
+
+static Platform platformFromEndpoint(const QString &endpoint)
 {
 
 	if (endpoint.contains(QString::fromUtf8("ingest.global-contribute.live-video.net")) ||
 	    endpoint.contains(QString::fromUtf8(".contribute.live-video.net")) ||
 	    endpoint.contains(QString::fromUtf8(".twitch.tv"))) { // twitch
-		return QIcon(":/aitum/media/twitch.png");
+		return {":/aitum/media/twitch.png", "Twitch"};
 	} else if (endpoint.contains(QString::fromUtf8(".youtube.com"))) { // youtube
-		return QIcon(":/aitum/media/youtube.png");
+		return {":/aitum/media/youtube.png", "YouTube"};
 	} else if (endpoint.contains(QString::fromUtf8("fa723fc1b171.global-contribute.live-video.net"))) { // kick
-		return QIcon(":/aitum/media/kick.png");
+		return {":/aitum/media/kick.png", "Kick"};
 	} else if (endpoint.contains(QString::fromUtf8(".tiktokcdn"))) { // tiktok
-		return QIcon(":/aitum/media/tiktok.png");
+		return {":/aitum/media/tiktok.png", "TikTok"};
 	} else if (endpoint.contains(QString::fromUtf8(".pscp.tv"))) { // twitter
-		return QIcon(":/aitum/media/twitter.png");
+		return {":/aitum/media/twitter.png", "X (Twitter)"};
 	} else if (endpoint.contains(QString::fromUtf8("livepush.trovo.live"))) { // trovo
-		return QIcon(":/aitum/media/trovo.png");
+		return {":/aitum/media/trovo.png", "Trovo"};
 	} else if (endpoint.contains(QString::fromUtf8(".facebook.com")) ||
 		   endpoint.contains(QString::fromUtf8(".fbcdn.net"))) { // facebook
-		return QIcon(":/aitum/media/facebook.png");
+		return {":/aitum/media/facebook.png", "Facebook"};
 	} else { // unknown
-		return QIcon(":/aitum/media/unknown.png");
+		return {":/aitum/media/unknown.png", nullptr};
 	}
+}
+} // namespace
+
+QIcon ConfigUtils::getPlatformIconFromEndpoint(QString endpoint)
+{
+	return QIcon(QString::fromUtf8(platformFromEndpoint(endpoint).icon));
+}
+
+QString ConfigUtils::getPlatformNameFromEndpoint(QString endpoint)
+{
+	auto name = platformFromEndpoint(endpoint).name;
+	return name ? QString::fromUtf8(name) : QString();
 }

@@ -31,7 +31,9 @@ private:
 	QPushButton *configButton = nullptr;
 	QPushButton *addFacebookButton = nullptr;
 	QLabel *mainPlatformIconLabel = nullptr;
+	QLabel *mainStreamLabel = nullptr;
 	QString mainPlatformUrl;
+	bool mainPlatformShown = false;
 
 	QTimer videoCheckTimer;
 	video_t *mainVideo = nullptr;
@@ -49,6 +51,7 @@ private:
 	void LoadOutput(obs_data_t *data, bool vertical);
 	void AddFacebookOutput();
 	void UpdateAddFacebookButton();
+	void UpdateMainStreamPlatform();
 	void SaveSettings();
 
 	bool StartOutput(obs_data_t *settings, QPushButton *streamButton);
