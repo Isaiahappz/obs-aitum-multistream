@@ -126,16 +126,52 @@ void RemoveWidget(QWidget *widget)
 	delete widget;
 }
 
-// Output button styling
+// Output button styling. The button says what it will do, or what it is doing,
+// rather than leaving a volunteer to work it out from an icon and a colour.
 void MultistreamDock::outputButtonStyle(QPushButton *button)
 {
-	button->setMinimumHeight(24);
+	button->setMinimumHeight(36);
 
-	std::string baseStyles = "min-width: 30px; padding: 2px 10px; border-width: 2px;";
+	bool live = button->isChecked();
+	bool connecting = button->property("connecting").toBool();
 
-	button->setStyleSheet(QString::fromUtf8(baseStyles + (button->isChecked() ? "background: rgb(0,210,153);" : "")));
+	std::string baseStyles = "font-size: 14px; min-height: 36px; padding: 4px 12px; border-width: 2px;";
 
-	button->setIcon(button->isChecked() ? streamActiveIcon : streamInactiveIcon);
+	button->setStyleSheet(QString::fromUtf8(baseStyles + (live ? "background: rgb(0,210,153);" : "")));
+
+	button->setIcon(live ? streamActiveIcon : streamInactiveIcon);
+
+	if (connecting) {
+		button->setText(QString::fromUtf8(obs_module_text("StreamButtonConnecting")));
+		button->setToolTip(QString::fromUtf8(obs_module_text("StreamButtonConnectingTooltip")));
+	} else if (live) {
+		button->setText(QString::fromUtf8(obs_module_text("StreamButtonLive")));
+		button->setToolTip(QString::fromUtf8(obs_module_text("StreamButtonLiveTooltip")));
+	} else {
+		button->setText(QString::fromUtf8(obs_module_text("StreamButtonGoLive")));
+		button->setToolTip(QString::fromUtf8(obs_module_text("StreamButtonGoLiveTooltip")));
+	}
+}
+
+// Keeps a row's button in step with its output. An output that is up wins, a
+// start still in progress holds the button on and labelled as connecting, and
+// anything else is off. Restyled only when something actually changed, since
+// this runs twice a second.
+void MultistreamDock::syncOutputButton(QPushButton *button, bool active)
+{
+	bool changed = false;
+	if (active && button->property("connecting").toBool()) {
+		button->setProperty("connecting", false);
+		changed = true;
+	}
+	bool checked = active || button->property("connecting").toBool();
+	if (button->isChecked() != checked) {
+		button->setChecked(checked);
+		changed = true;
+	}
+	if (changed) {
+		outputButtonStyle(button);
+	}
 }
 
 // Per output status line, kept next to the output's own start/stop button so a
@@ -185,6 +221,8 @@ void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text
 // modal there would block the whole OBS UI until someone found it.
 void MultistreamDock::reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message)
 {
+	streamButton->setProperty("connecting", false);
+	outputButtonStyle(streamButton);
 	setOutputStatus(streamButton, status, OutputStatus::Error);
 	if (remoteStart) {
 		return;
@@ -328,6 +366,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 			}
 			if (stop) {
 				obs_frontend_streaming_stop();
+				mainStreamButton->setProperty("connecting", false);
 				mainStreamButton->setChecked(false);
 			} else {
 				mainStreamButton->setChecked(true);
@@ -347,12 +386,11 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 			} else {
 				obs_frontend_streaming_start();
 			}
+			mainStreamButton->setProperty("connecting", true);
 			mainStreamButton->setChecked(true);
 		}
 		outputButtonStyle(mainStreamButton);
 	});
-	//streamButton->setSizePolicy(sp2);
-	mainStreamButton->setToolTip(QString::fromUtf8(obs_module_text("Stream")));
 	l2->addWidget(mainStreamButton);
 	mainStreamLayout->addLayout(l2);
 
@@ -518,10 +556,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 					std::string cn = c->metaObject()->className();
 					if (cn == "QPushButton") {
 						auto pb = (QPushButton *)c;
-						if (pb->isChecked() != active) {
-							pb->setChecked(active);
-							outputButtonStyle(pb);
-						}
+						syncOutputButton(pb, active);
 					}
 				}
 				continue;
@@ -541,10 +576,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 					std::string cn = c->metaObject()->className();
 					if (cn == "QPushButton") {
 						auto pb = (QPushButton *)c;
-						if (pb->isChecked() != active) {
-							pb->setChecked(active);
-							outputButtonStyle(pb);
-						}
+						syncOutputButton(pb, active);
 					}
 				}
 			}
@@ -571,10 +603,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 				std::string cn = c->metaObject()->className();
 				if (cn == "QPushButton") {
 					auto pb = (QPushButton *)c;
-					if (pb->isChecked() != active) {
-						pb->setChecked(active);
-						outputButtonStyle(pb);
-					}
+					syncOutputButton(pb, active);
 				}
 			}
 		}
@@ -633,12 +662,17 @@ void MultistreamDock::frontend_event(enum obs_frontend_event event, void *privat
 	} else if (event == OBS_FRONTEND_EVENT_EXIT) {
 		md->SaveSettings();
 		md->exiting = true;
-	} else if (event == OBS_FRONTEND_EVENT_STREAMING_STARTING || event == OBS_FRONTEND_EVENT_STREAMING_STARTED) {
+	} else if (event == OBS_FRONTEND_EVENT_STREAMING_STARTING) {
+		md->mainStreamButton->setProperty("connecting", true);
 		md->mainStreamButton->setChecked(true);
 		md->outputButtonStyle(md->mainStreamButton);
-		md->mainStreamButton->setIcon(md->streamActiveIcon);
+	} else if (event == OBS_FRONTEND_EVENT_STREAMING_STARTED) {
+		md->mainStreamButton->setProperty("connecting", false);
+		md->mainStreamButton->setChecked(true);
+		md->outputButtonStyle(md->mainStreamButton);
 		md->storeMainStreamEncoders();
 	} else if (event == OBS_FRONTEND_EVENT_STREAMING_STOPPING || event == OBS_FRONTEND_EVENT_STREAMING_STOPPED) {
+		md->mainStreamButton->setProperty("connecting", false);
 		md->mainStreamButton->setChecked(false);
 		md->outputButtonStyle(md->mainStreamButton);
 	}
@@ -870,6 +904,8 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 				}
 				if (!start || !proc_handler_call(ph, "aitum_vertical_start_stream_output", &cd)) {
 					streamButton->setChecked(false);
+				} else {
+					streamButton->setProperty("connecting", true);
 				}
 			} else {
 				bool stop = true;
@@ -884,6 +920,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 					}
 				}
 				if (stop) {
+					streamButton->setProperty("connecting", false);
 					proc_handler_call(ph, "aitum_vertical_stop_stream_output", &cd);
 				} else {
 					streamButton->setChecked(true);
@@ -898,7 +935,9 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 			if (streamButton->isChecked()) {
 				blog(LOG_INFO, "[Aitum Multistream] start stream clicked '%s'",
 				     obs_data_get_string(output_data, "name"));
-				if (!StartOutput(output_data, streamButton)) {
+				if (StartOutput(output_data, streamButton)) {
+					streamButton->setProperty("connecting", true);
+				} else {
 					streamButton->setChecked(false);
 				}
 			} else {
@@ -917,6 +956,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 				if (stop) {
 					blog(LOG_INFO, "[Aitum Multistream] stop stream clicked '%s'",
 					     obs_data_get_string(output_data, "name"));
+					streamButton->setProperty("connecting", false);
 					const char *name2 = obs_data_get_string(output_data, "name");
 					for (auto it = outputs.begin(); it != outputs.end(); it++) {
 						if (std::get<std::string>(*it) != name2) {
@@ -935,8 +975,6 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 			outputButtonStyle(streamButton);
 		});
 	}
-	//streamButton->setSizePolicy(sp2);
-	streamButton->setToolTip(QString::fromUtf8(obs_module_text("Stream")));
 	l2->addWidget(streamButton);
 	streamLayout->addLayout(l2);
 
@@ -1390,10 +1428,11 @@ void MultistreamDock::stream_output_start(void *data, calldata_t *calldata)
 					continue;
 				}
 				auto button = std::get<QPushButton *>(*it);
+				button->setProperty("connecting", false);
 				if (!button->isChecked()) {
 					button->setChecked(true);
-					md->outputButtonStyle(button);
 				}
+				md->outputButtonStyle(button);
 				auto warning = button->property("outputWarning").toString();
 				md->setOutputStatus(button, warning,
 						    warning.isEmpty() ? OutputStatus::Normal : OutputStatus::Warning);
@@ -1438,10 +1477,11 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 					continue;
 				}
 				auto button = std::get<QPushButton *>(*it);
+				button->setProperty("connecting", false);
 				if (button->isChecked()) {
 					button->setChecked(false);
-					md->outputButtonStyle(button);
 				}
+				md->outputButtonStyle(button);
 				// The row outlives the output, so the reason for an
 				// unexpected stop stays visible in the dock.
 				md->setOutputStatus(button,

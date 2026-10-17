@@ -55,6 +55,7 @@ private:
 	bool StartOutput(obs_data_t *settings, QPushButton *streamButton);
 
 	void outputButtonStyle(QPushButton *button);
+	void syncOutputButton(QPushButton *button, bool active);
 
 	enum class OutputStatus { Normal, Warning, Error };
 
