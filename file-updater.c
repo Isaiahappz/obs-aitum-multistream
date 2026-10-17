@@ -22,6 +22,12 @@
 
 #endif
 
+/* A hung or very slow endpoint must not keep the worker thread alive
+ * indefinitely: update_info_destroy() joins it, so an unbounded request
+ * would block OBS shutdown. */
+#define CONNECT_TIMEOUT_SEC 10L
+#define TRANSFER_TIMEOUT_SEC 30L
+
 #define warn(msg, ...) blog(LOG_WARNING, "%s" msg, info->log_prefix, ##__VA_ARGS__)
 #define info(msg, ...) blog(LOG_WARNING, "%s" msg, info->log_prefix, ##__VA_ARGS__)
 
@@ -86,6 +92,8 @@ static bool do_http_request(struct update_info *info, const char *url, long *res
 	curl_easy_setopt(info->curl, CURLOPT_FAILONERROR, 1L);
 	curl_easy_setopt(info->curl, CURLOPT_NOSIGNAL, 1L);
 	curl_easy_setopt(info->curl, CURLOPT_ACCEPT_ENCODING, "");
+	curl_easy_setopt(info->curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT_SEC);
+	curl_easy_setopt(info->curl, CURLOPT_TIMEOUT, TRANSFER_TIMEOUT_SEC);
 	curl_obs_set_revoke_setting(info->curl);
 
 	code = curl_easy_perform(info->curl);
