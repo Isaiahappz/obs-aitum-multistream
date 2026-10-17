@@ -34,6 +34,13 @@ bool version_info_downloaded(void *param, struct file_download_data *file)
 		return true;
 	}
 
+	// This runs on the updater's worker thread, and the dock is deleted
+	// before obs_module_unload() joins it, so a late response can arrive
+	// with nothing left to tell.
+	if (!multistream_dock) {
+		return true;
+	}
+
 	QMetaObject::invokeMethod(multistream_dock, "ApiInfo", Q_ARG(QString, QString::fromUtf8((const char *)file->buffer.array)));
 
 	// Deliberately not destroyed here: this callback runs on the updater's
