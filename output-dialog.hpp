@@ -46,6 +46,7 @@ private:
 	// Generators
 	QLineEdit *generateOutputNameField(std::string text, QPushButton *confirmButton, bool edit = false);
 	QLineEdit *generateOutputServerField(QPushButton *confirmButton, bool locked, bool edit = false);
+	void prefillOutputServer(QLineEdit *field, QPushButton *confirmButton, const char *server, bool edit);
 	QComboBox *generateOutputServerCombo(std::string service, QPushButton *confirmButton, bool edit = false);
 	QLineEdit *generateOutputKeyField(QPushButton *confirmButton, bool edit = false);
 	QHBoxLayout *generateWizardButtonLayout(QPushButton *confirmButton, QPushButton *serviceButton, bool edit);

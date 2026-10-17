@@ -107,6 +107,21 @@ QLineEdit *OutputDialog::generateOutputServerField(QPushButton *confirmButton, b
 	return field;
 }
 
+// Fills in a platform's fixed server URL. A programmatic setText() emits no
+// textEdited, so the member the dialog actually saves has to be set here as
+// well, and the confirm button re-validated - otherwise the server looks
+// filled in while the dialog still considers it empty.
+void OutputDialog::prefillOutputServer(QLineEdit *field, QPushButton *confirmButton, const char *server, bool edit)
+{
+	if (edit) {
+		// The field already holds the server this output was saved with.
+		return;
+	}
+	field->setText(QString::fromUtf8(server));
+	outputServer = field->text();
+	validateOutputs(confirmButton);
+}
+
 // Helper for generating QComboBoxes for server selection
 QComboBox *OutputDialog::generateOutputServerCombo(std::string service, QPushButton *confirmButton, bool edit)
 {
@@ -470,7 +485,7 @@ QWidget *OutputDialog::WizardInfoKick(bool edit)
 
 	// Server field
 	auto serverSelection = generateOutputServerField(confirmButton, true, edit);
-	serverSelection->setText("rtmps://fa723fc1b171.global-contribute.live-video.net");
+	prefillOutputServer(serverSelection, confirmButton, "rtmps://fa723fc1b171.global-contribute.live-video.net", edit);
 	formLayout->addRow(generateFormLabel("KickServer"), serverSelection);
 
 	// Server info
@@ -877,7 +892,7 @@ QWidget *OutputDialog::WizardInfoTrovo(bool edit)
 
 	// Server field
 	auto serverSelection = generateOutputServerField(confirmButton, true, edit);
-	serverSelection->setText("rtmp://livepush.trovo.live/live/");
+	prefillOutputServer(serverSelection, confirmButton, "rtmp://livepush.trovo.live/live/", edit);
 
 	formLayout->addRow(generateFormLabel("TrovoServer"), serverSelection);
 
@@ -1043,8 +1058,7 @@ QWidget *OutputDialog::WizardInfoFacebook(bool edit)
 
 	// Server field
 	auto serverSelection = generateOutputServerField(confirmButton, false, edit);
-	if (!edit)
-		serverSelection->setText("rtmps://rtmp-api.facebook.com:443/rtmp/");
+	prefillOutputServer(serverSelection, confirmButton, "rtmps://rtmp-api.facebook.com:443/rtmp/", edit);
 
 	formLayout->addRow(generateFormLabel("FacebookServer"), serverSelection);
 
