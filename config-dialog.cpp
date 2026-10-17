@@ -1010,6 +1010,19 @@ void OBSBasicSettings::AddServer(QFormLayout *outputsLayout, obs_data_t *setting
 	outputsLayout->addRow(serverGroup);
 }
 
+// The vertical canvas only exists when Aitum Vertical is installed, the same
+// condition the dock applies to its own Vertical Canvas section.
+void OBSBasicSettings::SetVerticalAvailable(bool available)
+{
+	auto item = listWidget->item(2);
+	if (!available && listWidget->currentRow() == 2) {
+		listWidget->setCurrentRow(0);
+	}
+	item->setHidden(!available);
+	generalVerticalButton->setVisible(available);
+	verticalAddButton->setEnabled(available);
+}
+
 void OBSBasicSettings::LoadVerticalSettings(bool load)
 {
 	while (verticalOutputsLayout->rowCount() > 1) {
@@ -1022,11 +1035,14 @@ void OBSBasicSettings::LoadVerticalSettings(bool load)
 		struct calldata cd;
 		calldata_init(&cd);
 		if (!proc_handler_call(ph, "aitum_vertical_get_stream_settings", &cd)) {
-			// Disable button if we don't have vertical
-			verticalAddButton->setEnabled(false);
+			// Aitum Vertical is not installed, or is too old to
+			// answer: there is nothing this page could do, so it is
+			// not offered at all.
+			SetVerticalAvailable(false);
 			calldata_free(&cd);
 			return;
 		}
+		SetVerticalAvailable(true);
 		if (vertical_outputs)
 			obs_data_array_release(vertical_outputs);
 		vertical_outputs = (obs_data_array_t *)calldata_ptr(&cd, "outputs");

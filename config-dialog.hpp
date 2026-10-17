@@ -79,6 +79,7 @@ public:
 
 	void LoadSettings(obs_data_t *settings);
 	void LoadVerticalSettings(bool load);
+	void SetVerticalAvailable(bool available);
 	void SaveVerticalSettings();
 	void LoadOutputStats(std::vector<video_t *> *oldVideos);
 
