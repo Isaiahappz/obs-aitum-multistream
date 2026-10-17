@@ -22,6 +22,7 @@
 #include <QIcon>
 #include <QTabWidget>
 #include <QDialogButtonBox>
+#include <QTimer>
 
 #include "obs-module.h"
 #include "version.h"
@@ -942,8 +943,11 @@ void OBSBasicSettings::AddServer(QFormLayout *outputsLayout, obs_data_t *setting
 	removeButton->setProperty("themeID", QVariant(QString::fromUtf8("removeIconSmall")));
 	removeButton->setProperty("class", "icon-minus");
 	connect(removeButton, &QPushButton::clicked, [this, outputsLayout, serverGroup, settings, outputs] {
+		// serverGroup is the ancestor of this button, so it must not be
+		// deleted while its own clicked() emission is still on the stack.
 		outputsLayout->removeWidget(serverGroup);
-		RemoveWidget(serverGroup);
+		serverGroup->hide();
+		serverGroup->deleteLater();
 		auto count = obs_data_array_count(outputs);
 		for (size_t i = 0; i < count; i++) {
 			auto item = obs_data_array_item(outputs, i);
@@ -989,9 +993,13 @@ void OBSBasicSettings::AddServer(QFormLayout *outputsLayout, obs_data_t *setting
 			obs_data_set_string(settings, "stream_server", outputDialog->outputServer.toUtf8().constData());
 			obs_data_set_string(settings, "stream_key", outputDialog->outputKey.toUtf8().constData());
 
-			// Reload
-			LoadSettings(main_settings);
-			LoadVerticalSettings(false);
+			// Reload. This tears down the row holding the button that
+			// is currently emitting clicked(), so it has to happen
+			// after this handler has returned.
+			QTimer::singleShot(0, this, [this] {
+				LoadSettings(main_settings);
+				LoadVerticalSettings(false);
+			});
 		}
 
 		delete outputDialog;
