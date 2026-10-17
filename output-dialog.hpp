@@ -56,11 +56,15 @@ private:
 
 	QStackedWidget *stackedWidget;
 	QStringList otherNames;
+	int facebookPageIndex = -1;
 
 public:
-	OutputDialog(QDialog *parent, QStringList otherNames);
-	OutputDialog(QDialog *parent, QString name, QString server, QString key, QStringList otherNames);
+	OutputDialog(QWidget *parent, QStringList otherNames);
+	OutputDialog(QWidget *parent, QString name, QString server, QString key, QStringList otherNames);
 	~OutputDialog();
+
+	// Skips the service picker, for a caller that already knows the service.
+	void showFacebookPage();
 
 	QString outputName;
 	QString outputServer;

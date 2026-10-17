@@ -1,5 +1,6 @@
 #include "config-utils.hpp"
 #include "multistream.hpp"
+#include "output-dialog.hpp"
 #include "obs-module.h"
 #include "version.h"
 #include <obs-frontend-api.h>
@@ -191,6 +192,11 @@ void MultistreamDock::reportStartFailure(QPushButton *streamButton, const QStrin
 	QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")), message);
 }
 
+// The dock is read at a glance by whoever is running the service, often from a
+// couple of steps away, so every control it offers carries a label at a size
+// that can be read and a target big enough to hit.
+auto dockButtonStyle = QString("font-size: 14px; min-height: 36px; padding: 4px 12px;");
+
 // Common styling things here
 auto canvasGroupStyle = QString("padding: 0px 0px 0px 0px;");                          // Main Canvas, Vertical Canvas
 auto canvasGroupHeaderStyle = QString("padding: 0px 0px 0px 0px; font-weight: bold;"); // header of each group
@@ -355,6 +361,21 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 	mainCanvasOutputLayout->addWidget(mainStreamGroup);
 
 	mainCanvasLayout->addLayout(mainCanvasOutputLayout);
+
+	// One-click path to the thing this dock is installed for. It is the only
+	// way to add an output without going through the settings dialog, so it
+	// stays out of the way once that output exists.
+	addFacebookButton = new QPushButton;
+	addFacebookButton->setText(QString::fromUtf8(obs_module_text("AddFacebookOutput")));
+	addFacebookButton->setIcon(QIcon(":/aitum/media/facebook.png"));
+	addFacebookButton->setIconSize(QSize(20, 20));
+	addFacebookButton->setStyleSheet(dockButtonStyle + QString("font-weight: bold;"));
+	addFacebookButton->setMinimumHeight(36);
+	addFacebookButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	addFacebookButton->setToolTip(QString::fromUtf8(obs_module_text("AddFacebookOutputTooltip")));
+	connect(addFacebookButton, &QPushButton::clicked, [this] { AddFacebookOutput(); });
+	mainCanvasLayout->addWidget(addFacebookButton);
+
 	mainCanvasGroup->setLayout(mainCanvasLayout);
 
 	tl->addWidget(mainCanvasGroup);
@@ -695,6 +716,72 @@ void MultistreamDock::LoadSettings()
 		},
 		this);
 	obs_data_array_release(outputs2);
+
+	UpdateAddFacebookButton();
+}
+
+// Shown only while there is no Facebook output to add.
+void MultistreamDock::UpdateAddFacebookButton()
+{
+	if (!addFacebookButton) {
+		return;
+	}
+	bool found = false;
+	auto outputs = obs_data_get_array(current_config, "outputs");
+	auto count = obs_data_array_count(outputs);
+	for (size_t i = 0; i < count && !found; i++) {
+		auto item = obs_data_array_item(outputs, i);
+		found = ConfigUtils::isFacebookEndpoint(QString::fromUtf8(obs_data_get_string(item, "stream_server"))) ||
+			ConfigUtils::isFacebookEndpoint(QString::fromUtf8(obs_data_get_string(item, "server")));
+		obs_data_release(item);
+	}
+	obs_data_array_release(outputs);
+	addFacebookButton->setVisible(!found);
+}
+
+// Adds a Facebook output through the normal output dialog, opened on its
+// Facebook page, and saves it exactly as the settings dialog would.
+void MultistreamDock::AddFacebookOutput()
+{
+	if (!current_config) {
+		return;
+	}
+
+	QStringList otherNames;
+	auto existing = obs_data_get_array(current_config, "outputs");
+	obs_data_array_enum(
+		existing,
+		[](obs_data_t *item, void *param) {
+			((QStringList *)param)->append(QString::fromUtf8(obs_data_get_string(item, "name")));
+		},
+		&otherNames);
+	obs_data_array_release(existing);
+	otherNames.removeDuplicates();
+
+	auto dialog = new OutputDialog(this, otherNames);
+	dialog->showFacebookPage();
+	dialog->setWindowModality(Qt::WindowModal);
+	dialog->setModal(true);
+
+	if (dialog->exec() == QDialog::Accepted) {
+		auto outputs = obs_data_get_array(current_config, "outputs");
+		if (!outputs) {
+			outputs = obs_data_array_create();
+			obs_data_set_array(current_config, "outputs", outputs);
+		}
+		auto s = obs_data_create();
+		obs_data_set_string(s, "name", dialog->outputName.toUtf8().constData());
+		obs_data_set_string(s, "stream_server", dialog->outputServer.toUtf8().constData());
+		obs_data_set_string(s, "stream_key", dialog->outputKey.toUtf8().constData());
+		obs_data_array_push_back(outputs, s);
+		obs_data_release(s);
+		obs_data_array_release(outputs);
+
+		SaveSettings();
+		LoadSettings();
+	}
+
+	delete dialog;
 }
 
 void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)

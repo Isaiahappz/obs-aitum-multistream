@@ -27,6 +27,7 @@ private:
 	QVBoxLayout *verticalCanvasOutputLayout = nullptr;
 	QPushButton *mainStreamButton = nullptr;
 	QPushButton *configButton = nullptr;
+	QPushButton *addFacebookButton = nullptr;
 	QLabel *mainPlatformIconLabel = nullptr;
 	QString mainPlatformUrl;
 
@@ -47,6 +48,8 @@ private:
 	void LoadSettingsFile();
 	void LoadSettings();
 	void LoadOutput(obs_data_t *data, bool vertical);
+	void AddFacebookOutput();
+	void UpdateAddFacebookButton();
 	void SaveSettings();
 
 	bool StartOutput(obs_data_t *settings, QPushButton *streamButton);

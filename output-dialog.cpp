@@ -18,6 +18,13 @@
 #include "config-utils.hpp"
 #include "stream-key-input.hpp"
 
+void OutputDialog::showFacebookPage()
+{
+	if (facebookPageIndex >= 0) {
+		stackedWidget->setCurrentIndex(facebookPageIndex);
+	}
+}
+
 // Reset output values, e.g. when user hits the back button
 void OutputDialog::resetOutputs()
 {
@@ -305,7 +312,7 @@ obs_data_t *OutputDialog::getService(std::string serviceName)
 	return nullptr;
 }
 
-OutputDialog::OutputDialog(QDialog *parent, QStringList _otherNames) : QDialog(parent), otherNames(_otherNames)
+OutputDialog::OutputDialog(QWidget *parent, QStringList _otherNames) : QDialog(parent), otherNames(_otherNames)
 {
 	// Load the services from rtmp-services plugin
 	auto module = obs_get_module("rtmp-services");
@@ -342,7 +349,7 @@ OutputDialog::OutputDialog(QDialog *parent, QStringList _otherNames) : QDialog(p
 	stackedWidget->addWidget(WizardInfoTwitch());
 	stackedWidget->addWidget(WizardInfoTrovo());
 	stackedWidget->addWidget(WizardInfoTikTok());
-	stackedWidget->addWidget(WizardInfoFacebook());
+	facebookPageIndex = stackedWidget->addWidget(WizardInfoFacebook());
 
 	stackedWidget->setCurrentIndex(0);
 
@@ -358,7 +365,7 @@ OutputDialog::OutputDialog(QDialog *parent, QStringList _otherNames) : QDialog(p
 }
 
 // Edit mode
-OutputDialog::OutputDialog(QDialog *parent, QString name, QString server, QString key, QStringList _otherNames)
+OutputDialog::OutputDialog(QWidget *parent, QString name, QString server, QString key, QStringList _otherNames)
 	: QDialog(parent),
 	  otherNames(_otherNames)
 {
