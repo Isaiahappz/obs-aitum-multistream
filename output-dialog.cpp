@@ -281,7 +281,7 @@ OutputDialog::OutputDialog(QDialog *parent, QStringList _otherNames) : QDialog(p
 
 	servicesData = obs_data_get_array(allData, "services");
 
-	bfree(allData);
+	obs_data_release(allData);
 	bfree(servicesPath);
 	bfree(absolutePath);
 
