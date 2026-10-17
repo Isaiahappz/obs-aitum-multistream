@@ -106,6 +106,8 @@ static bool do_http_request(struct update_info *info, const char *url, long *res
 	curl_easy_setopt(info->curl, CURLOPT_ACCEPT_ENCODING, "");
 	curl_easy_setopt(info->curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT_SEC);
 	curl_easy_setopt(info->curl, CURLOPT_TIMEOUT, TRANSFER_TIMEOUT_SEC);
+	if (info->user_agent)
+		curl_easy_setopt(info->curl, CURLOPT_USERAGENT, info->user_agent);
 	curl_obs_set_revoke_setting(info->curl);
 
 	code = curl_easy_perform(info->curl);
