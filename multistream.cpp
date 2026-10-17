@@ -421,12 +421,14 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 
 	// Config Button
 	configButton = new QPushButton;
-	configButton->setMinimumHeight(30);
+	configButton->setMinimumHeight(36);
 	configButton->setProperty("themeID", "configIconSmall");
 	configButton->setProperty("class", "icon-gear");
-	configButton->setFlat(true);
 	configButton->setAutoDefault(false);
-	//configButton->setSizePolicy(sp2);
+	// Labelled rather than a bare gear: nothing in the dock should need to be
+	// recognised from its icon alone.
+	configButton->setText(QString::fromUtf8(obs_module_text("SettingsButton")));
+	configButton->setStyleSheet(dockButtonStyle);
 	configButton->setToolTip(QString::fromUtf8(obs_module_text("AitumMultistreamSettings")));
 	QPushButton::connect(configButton, &QPushButton::clicked, [this] {
 		if (!configDialog) {
@@ -457,7 +459,7 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 		}
 	});
 
-	buttonRow->addWidget(configButton);
+	buttonRow->addWidget(configButton, 1);
 
 	// Contribute Button
 	auto contributeButton = new QPushButton;
