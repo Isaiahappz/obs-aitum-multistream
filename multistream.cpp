@@ -228,8 +228,7 @@ static bool is_rtmp_like_url(const char *url)
 	if (!url) {
 		return false;
 	}
-	return astrcmpi_n(url, "rtmp://", 7) == 0 || astrcmpi_n(url, "rtmps://", 8) == 0 ||
-	       astrcmpi_n(url, "ftl://", 6) == 0;
+	return astrcmpi_n(url, "rtmp://", 7) == 0 || astrcmpi_n(url, "rtmps://", 8) == 0 || astrcmpi_n(url, "ftl://", 6) == 0;
 }
 
 // Outputs saved by older versions of the plugin keep the endpoint and the key
@@ -1023,9 +1022,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				blog(LOG_WARNING,
 				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), vei);
-				reportStartFailure(
-					streamButton, QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
-					QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
+				reportStartFailure(streamButton,
+						   QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
+						   QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
 				return false;
 			}
 		} else {
@@ -1073,9 +1072,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				blog(LOG_WARNING,
 				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), aei);
-				reportStartFailure(
-					streamButton, QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
-					QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
+				reportStartFailure(streamButton,
+						   QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
+						   QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
 				return false;
 			}
 		} else {
@@ -1197,8 +1196,8 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		blog(LOG_WARNING, "[Aitum Multistream] failed to start output '%s': %s", name,
 		     (last_error && *last_error) ? last_error : "no error reported");
 
-		auto reason = QString::fromUtf8((last_error && *last_error) ? last_error
-									   : obs_module_text("OutputStatusUnknownError"));
+		auto reason =
+			QString::fromUtf8((last_error && *last_error) ? last_error : obs_module_text("OutputStatusUnknownError"));
 		signal_handler_disconnect(signal, "start", stream_output_start, this);
 		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
 		signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
@@ -1328,8 +1327,7 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 				md->setOutputStatus(button,
 						    code == OBS_OUTPUT_SUCCESS
 							    ? QString()
-							    : QString::fromUtf8(obs_module_text("OutputStatusStopped"))
-								      .arg(reason),
+							    : QString::fromUtf8(obs_module_text("OutputStatusStopped")).arg(reason),
 						    code != OBS_OUTPUT_SUCCESS);
 				md->outputs.erase(it);
 				if (!md->exiting) {

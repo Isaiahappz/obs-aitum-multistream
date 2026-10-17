@@ -79,8 +79,7 @@ static size_t http_write(void *ptr, size_t size, size_t nmemb, void *uinfo)
 	/* Returning a short count aborts the transfer, which keeps a very
 	 * large or endless response from growing the buffer without bound. */
 	if (info->file_data.num + total > MAX_DOWNLOAD_BYTES) {
-		warn("Remote update of URL \"%s\" aborted: response exceeds %zu bytes", info->url,
-		     (size_t)MAX_DOWNLOAD_BYTES);
+		warn("Remote update of URL \"%s\" aborted: response exceeds %zu bytes", info->url, (size_t)MAX_DOWNLOAD_BYTES);
 		return 0;
 	}
 

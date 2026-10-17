@@ -80,7 +80,6 @@ private:
 	static void vendor_request_start_output(obs_data_t *request_data, obs_data_t *response_data, void *self);
 	static void vendor_request_stop_output(obs_data_t *request_data, obs_data_t *response_data, void *self);
 
-
 private slots:
 	void ApiInfo(QString info);
 
