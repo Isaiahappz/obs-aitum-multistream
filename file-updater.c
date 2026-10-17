@@ -136,6 +136,8 @@ struct file_update_data {
 	bool found;
 };
 
+/* The handle stays owned by whoever called update_info_create_single();
+ * this thread never frees it, so bailing out early cannot leak it. */
 static void *single_file_thread(void *data)
 {
 	struct update_info *info = data;
@@ -157,7 +159,6 @@ static void *single_file_thread(void *data)
 	download_data.version = 0;
 	download_data.buffer.da = info->file_data.da;
 	info->callback(info->param, &download_data);
-	//info is freed in callback, can't visit it.
 	return NULL;
 }
 
