@@ -12,8 +12,10 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QSizePolicy>
+#include <QMessageBox>
 #include "obs-module.h"
 #include "util/platform.h"
+#include "config-utils.hpp"
 #include "stream-key-input.hpp"
 
 // Reset output values, e.g. when user hits the back button
@@ -27,6 +29,22 @@ void OutputDialog::resetOutputs()
 // For when we're done
 void OutputDialog::acceptOutputs()
 {
+	// A new output uses the main stream's encoder, and Facebook wants a
+	// keyframe at least every two seconds. Say so while the operator is
+	// still in front of the settings, but never refuse to save.
+	if (ConfigUtils::isFacebookEndpoint(outputServer)) {
+		auto keyint = ConfigUtils::mainStreamKeyintSec();
+		QString detail;
+		if (keyint == 0) {
+			detail = QString::fromUtf8(obs_module_text("FacebookKeyframeAuto"));
+		} else if (keyint > 2) {
+			detail = QString::fromUtf8(obs_module_text("FacebookKeyframeTooLong")).arg(keyint);
+		}
+		if (!detail.isEmpty()) {
+			QMessageBox::warning(this, QString::fromUtf8(obs_module_text("FacebookKeyframeTitle")),
+					     QString::fromUtf8(obs_module_text("FacebookKeyframeMessage")).arg(detail));
+		}
+	}
 	accept();
 }
 

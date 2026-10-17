@@ -139,7 +139,7 @@ void MultistreamDock::outputButtonStyle(QPushButton *button)
 
 // Per output status line, kept next to the output's own start/stop button so a
 // failure is visible in the dock without a dialog. An empty text hides it.
-void MultistreamDock::setOutputStatus(QPushButton *button, const QString &text, bool isError)
+void MultistreamDock::setOutputStatus(QPushButton *button, const QString &text, OutputStatus level)
 {
 	if (!button) {
 		return;
@@ -152,23 +152,26 @@ void MultistreamDock::setOutputStatus(QPushButton *button, const QString &text, 
 	if (!label) {
 		return;
 	}
-	label->setStyleSheet(isError ? QString("padding: 0px; color: rgb(255,110,110);") : QString("padding: 0px;"));
+	auto colour = level == OutputStatus::Error
+			      ? QString("color: rgb(255,110,110);")
+			      : (level == OutputStatus::Warning ? QString("color: rgb(255,190,90);") : QString());
+	label->setStyleSheet(QString("padding: 0px;") + colour);
 	label->setText(text);
 	label->setVisible(!text.isEmpty());
 }
 
 // Same, for a status that arrives on an output's own thread: the `outputs`
 // vector and every widget in it may only be touched on the UI thread.
-void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text, bool isError)
+void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text, OutputStatus level)
 {
 	QMetaObject::invokeMethod(
 		this,
-		[this, output, text, isError] {
+		[this, output, text, level] {
 			for (auto it = outputs.begin(); it != outputs.end(); it++) {
 				if (std::get<obs_output_t *>(*it) != output) {
 					continue;
 				}
-				setOutputStatus(std::get<QPushButton *>(*it), text, isError);
+				setOutputStatus(std::get<QPushButton *>(*it), text, level);
 				break;
 			}
 		},
@@ -181,7 +184,7 @@ void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text
 // modal there would block the whole OBS UI until someone found it.
 void MultistreamDock::reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message)
 {
-	setOutputStatus(streamButton, status, true);
+	setOutputStatus(streamButton, status, OutputStatus::Error);
 	if (remoteStart) {
 		return;
 	}
@@ -1189,6 +1192,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	obs_output_set_video_encoder(output, venc);
 	obs_output_set_audio_encoder(output, aenc, 0);
 
+	// True when venc belongs to the main stream rather than to this output.
+	bool sharedVideoEncoder = !advanced || !*obs_data_get_string(settings, "video_encoder");
+
 	if (!obs_output_start(output)) {
 		// A refused start is silent otherwise: the button would latch on
 		// and the stream would simply never reach the platform.
@@ -1210,7 +1216,30 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		return false;
 	}
 
-	setOutputStatus(streamButton, QString(), false);
+	// Facebook stalls and drops frames when keyframes are further apart than
+	// two seconds. A shared encoder is the main stream's, so there is nothing
+	// on this output that could fix it - say so and carry on streaming.
+	QString startupWarning;
+	if (sharedVideoEncoder && ConfigUtils::isFacebookEndpoint(QString::fromUtf8(server))) {
+		auto keyint = ConfigUtils::mainStreamKeyintSec();
+		QString detail;
+		if (keyint == 0) {
+			detail = QString::fromUtf8(obs_module_text("FacebookKeyframeAuto"));
+		} else if (keyint > 2) {
+			detail = QString::fromUtf8(obs_module_text("FacebookKeyframeTooLong")).arg(keyint);
+		}
+		if (!detail.isEmpty()) {
+			startupWarning = QString::fromUtf8(obs_module_text("OutputStatusFacebookKeyframe")).arg(detail);
+			blog(LOG_WARNING,
+			     "[Aitum Multistream] output '%s' streams to Facebook with the main encoder's keyint_sec at %d, Facebook expects 2 seconds or less",
+			     name, keyint);
+		}
+	}
+
+	// Kept on the button so the status line can be restored when the output
+	// reports that it started, which otherwise clears it.
+	streamButton->setProperty("outputWarning", startupWarning);
+	setOutputStatus(streamButton, startupWarning, startupWarning.isEmpty() ? OutputStatus::Normal : OutputStatus::Warning);
 
 	outputs.push_back({obs_data_get_string(settings, "name"), output, streamButton});
 
@@ -1276,7 +1305,9 @@ void MultistreamDock::stream_output_start(void *data, calldata_t *calldata)
 					button->setChecked(true);
 					md->outputButtonStyle(button);
 				}
-				md->setOutputStatus(button, QString(), false);
+				auto warning = button->property("outputWarning").toString();
+				md->setOutputStatus(button, warning,
+						    warning.isEmpty() ? OutputStatus::Normal : OutputStatus::Warning);
 			}
 		},
 		Qt::QueuedConnection);
@@ -1328,7 +1359,7 @@ void MultistreamDock::stream_output_stop(void *data, calldata_t *calldata)
 						    code == OBS_OUTPUT_SUCCESS
 							    ? QString()
 							    : QString::fromUtf8(obs_module_text("OutputStatusStopped")).arg(reason),
-						    code != OBS_OUTPUT_SUCCESS);
+						    code == OBS_OUTPUT_SUCCESS ? OutputStatus::Normal : OutputStatus::Error);
 				md->outputs.erase(it);
 				if (!md->exiting) {
 					obs_output_release(output);
@@ -1350,7 +1381,8 @@ void MultistreamDock::stream_output_reconnect(void *data, calldata_t *calldata)
 	blog(LOG_WARNING, "[Aitum Multistream] output '%s' lost its connection, retrying in %d second(s): %s",
 	     output_name ? output_name : "", (int)timeout, (last_error && *last_error) ? last_error : "no error reported");
 
-	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnecting")).arg((int)timeout), true);
+	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnecting")).arg((int)timeout),
+			     OutputStatus::Error);
 }
 
 void MultistreamDock::stream_output_reconnect_success(void *data, calldata_t *calldata)
@@ -1361,7 +1393,7 @@ void MultistreamDock::stream_output_reconnect_success(void *data, calldata_t *ca
 
 	blog(LOG_INFO, "[Aitum Multistream] output '%s' reconnected", output_name ? output_name : "");
 
-	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnected")), false);
+	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnected")), OutputStatus::Normal);
 }
 
 void MultistreamDock::ApiInfo(QString info)

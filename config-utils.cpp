@@ -18,6 +18,32 @@
 #include "obs-frontend-api.h"
 #include <util/dstr.h>
 
+bool ConfigUtils::isFacebookEndpoint(QString endpoint)
+{
+	return endpoint.contains(QStringLiteral("facebook.com"), Qt::CaseInsensitive);
+}
+
+int ConfigUtils::mainStreamKeyintSec()
+{
+	auto main_output = obs_frontend_get_streaming_output();
+	if (!main_output) {
+		return -1;
+	}
+	int keyint = -1;
+	// The encoders only exist while the main stream is running, which is
+	// also the only time an output can share them.
+	auto venc = obs_output_get_video_encoder(main_output);
+	if (venc) {
+		auto settings = obs_encoder_get_settings(venc);
+		if (settings) {
+			keyint = (int)obs_data_get_int(settings, "keyint_sec");
+			obs_data_release(settings);
+		}
+	}
+	obs_output_release(main_output);
+	return keyint;
+}
+
 // Generate buttons for default/custom stuff
 QPushButton *ConfigUtils::generateButton(QString buttonText)
 {

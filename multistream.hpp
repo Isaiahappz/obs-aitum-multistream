@@ -53,8 +53,10 @@ private:
 
 	void outputButtonStyle(QPushButton *button);
 
-	void setOutputStatus(QPushButton *button, const QString &text, bool isError);
-	void postOutputStatus(obs_output_t *output, const QString &text, bool isError);
+	enum class OutputStatus { Normal, Warning, Error };
+
+	void setOutputStatus(QPushButton *button, const QString &text, OutputStatus level);
+	void postOutputStatus(obs_output_t *output, const QString &text, OutputStatus level);
 	void reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message);
 
 	// Set for the duration of a start that came in over the websocket, where
