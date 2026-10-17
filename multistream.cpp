@@ -770,7 +770,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 			if (streamButton->isChecked()) {
 				bool start = true;
 				bool warnBeforeStreamStart = config_get_bool(config, "BasicWindow", "WarnBeforeStartingStream");
-				if (warnBeforeStreamStart && isVisible()) {
+				if (warnBeforeStreamStart && isVisible() && !remoteStart) {
 					auto button = QMessageBox::question(
 						this, QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStart.Title")),
 						QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStart.Text")),
@@ -785,7 +785,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 			} else {
 				bool stop = true;
 				bool warnBeforeStreamStop = config_get_bool(config, "BasicWindow", "WarnBeforeStoppingStream");
-				if (warnBeforeStreamStop && isVisible()) {
+				if (warnBeforeStreamStop && isVisible() && !remoteStop) {
 					auto button = QMessageBox::question(
 						this, QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStop.Title")),
 						QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStop.Text")),
@@ -816,7 +816,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 				bool stop = true;
 				bool warnBeforeStreamStop =
 					config_get_bool(get_user_config(), "BasicWindow", "WarnBeforeStoppingStream");
-				if (warnBeforeStreamStop && isVisible()) {
+				if (warnBeforeStreamStop && isVisible() && !remoteStop) {
 					auto button = QMessageBox::question(
 						this, QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStop.Title")),
 						QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStop.Text")),
@@ -1723,7 +1723,13 @@ void MultistreamDock::vendor_request_start_output(obs_data_t *request_data, obs_
 					auto button = w->findChild<QPushButton *>(QStringLiteral("canvasStream"));
 					if (button && !button->isChecked()) {
 						QMetaObject::invokeMethod(
-							button, [button] { button->click(); }, Qt::QueuedConnection);
+							button,
+							[md, button] {
+								md->remoteStart = true;
+								button->click();
+								md->remoteStart = false;
+							},
+							Qt::QueuedConnection);
 					}
 					*sb = true;
 					return;
@@ -1764,7 +1770,18 @@ void MultistreamDock::vendor_request_stop_output(obs_data_t *request_data, obs_d
 					auto button = w->findChild<QPushButton *>(QStringLiteral("canvasStream"));
 					if (button && button->isChecked()) {
 						QMetaObject::invokeMethod(
-							button, [button] { button->click(); }, Qt::QueuedConnection);
+							button,
+							[md, button] {
+								// The click, and the stop it
+								// performs, run to completion
+								// inside this call on the UI
+								// thread, so the flag covers
+								// exactly this one stop.
+								md->remoteStop = true;
+								button->click();
+								md->remoteStop = false;
+							},
+							Qt::QueuedConnection);
 					}
 					*sb = true;
 					return;
@@ -1781,7 +1798,18 @@ void MultistreamDock::vendor_request_stop_output(obs_data_t *request_data, obs_d
 					auto button = w->findChild<QPushButton *>(QStringLiteral("canvasStream"));
 					if (button && button->isChecked()) {
 						QMetaObject::invokeMethod(
-							button, [button] { button->click(); }, Qt::QueuedConnection);
+							button,
+							[md, button] {
+								// The click, and the stop it
+								// performs, run to completion
+								// inside this call on the UI
+								// thread, so the flag covers
+								// exactly this one stop.
+								md->remoteStop = true;
+								button->click();
+								md->remoteStop = false;
+							},
+							Qt::QueuedConnection);
 					}
 					*sb = true;
 					return;
