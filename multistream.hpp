@@ -7,10 +7,8 @@
 #include <QFrame>
 #include <QPushButton>
 #include <QString>
-#include <QThreadPool>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <atomic>
 
 class OBSBasicSettings;
 
@@ -53,23 +51,13 @@ private:
 
 	bool StartOutput(obs_data_t *settings, QPushButton *streamButton);
 
-	void startOutputAsync(obs_output_t *output, const std::string &name, bool remote);
-	void outputStartFailed(obs_output_t *output, const std::string &name, const QString &reason, bool remote);
-
-	// obs_output_start() runs on this pool instead of the UI thread. The
-	// destructor waits for it before touching anything else, so a worker can
-	// rely on the dock being alive for as long as it runs.
-	QThreadPool startPool;
-	// Read by the workers, so it cannot be the plain `exiting` flag.
-	std::atomic<bool> startsCancelled{false};
-
 	void outputButtonStyle(QPushButton *button);
 
 	enum class OutputStatus { Normal, Warning, Error };
 
 	void setOutputStatus(QPushButton *button, const QString &text, OutputStatus level);
 	void postOutputStatus(obs_output_t *output, const QString &text, OutputStatus level);
-	void reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message, bool suppressDialog);
+	void reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message);
 
 	// Set for the duration of a start or stop that came in over the
 	// websocket, where there is nobody at the keyboard to dismiss a modal
