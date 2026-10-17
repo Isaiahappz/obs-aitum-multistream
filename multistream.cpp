@@ -175,6 +175,19 @@ void MultistreamDock::postOutputStatus(obs_output_t *output, const QString &text
 		Qt::QueuedConnection);
 }
 
+// Why a start did not happen, always on the output's status line in the dock
+// and additionally in a dialog when the operator is the one who asked for it.
+// A start arriving over the websocket has nobody in front of the screen, and a
+// modal there would block the whole OBS UI until someone found it.
+void MultistreamDock::reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message)
+{
+	setOutputStatus(streamButton, status, true);
+	if (remoteStart) {
+		return;
+	}
+	QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")), message);
+}
+
 // Common styling things here
 auto canvasGroupStyle = QString("padding: 0px 0px 0px 0px;");                          // Main Canvas, Vertical Canvas
 auto canvasGroupHeaderStyle = QString("padding: 0px 0px 0px 0px; font-weight: bold;"); // header of each group
@@ -946,22 +959,20 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	auto configured_server = get_output_setting(settings, "stream_server", "server");
 	if (!configured_server || !*configured_server) {
 		blog(LOG_WARNING, "[Aitum Multistream] refusing to start output '%s': no stream server is configured", name);
-		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoServer")), true);
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
-				     QString::fromUtf8(obs_module_text("OutputNoServer")).arg(QString::fromUtf8(name)));
+		reportStartFailure(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoServer")),
+				   QString::fromUtf8(obs_module_text("OutputNoServer")).arg(QString::fromUtf8(name)));
 		return false;
 	}
 	auto configured_key = get_output_setting(settings, "stream_key", "key");
 	if (!configured_key || !*configured_key) {
 		blog(LOG_WARNING, "[Aitum Multistream] refusing to start output '%s': no stream key is configured", name);
-		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoKey")), true);
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
-				     QString::fromUtf8(obs_module_text("OutputNoKey")).arg(QString::fromUtf8(name)));
+		reportStartFailure(streamButton, QString::fromUtf8(obs_module_text("OutputStatusNoKey")),
+				   QString::fromUtf8(obs_module_text("OutputNoKey")).arg(QString::fromUtf8(name)));
 		return false;
 	}
 
 	bool warnBeforeStreamStart = config_get_bool(get_user_config(), "BasicWindow", "WarnBeforeStartingStream");
-	if (warnBeforeStreamStart && isVisible()) {
+	if (warnBeforeStreamStart && isVisible() && !remoteStart) {
 		auto button = QMessageBox::question(this, QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStart.Title")),
 						    QString::fromUtf8(obs_frontend_get_locale_string("ConfirmStart.Text")),
 						    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
@@ -1000,8 +1011,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				obs_output_release(main_output);
 				blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
 				     obs_data_get_string(settings, "name"));
-				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
-						     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
+				reportStartFailure(streamButton,
+						   QString::fromUtf8(obs_module_text("OutputStatusMainOutputNotActive")),
+						   QString::fromUtf8(obs_module_text("MainOutputNotActive")));
 				return false;
 			}
 			auto vei = (int)obs_data_get_int(settings, "video_encoder_index");
@@ -1011,8 +1023,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				blog(LOG_WARNING,
 				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), vei);
-				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")),
-						     QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
+				reportStartFailure(
+					streamButton, QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
+					QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
 				return false;
 			}
 		} else {
@@ -1048,8 +1061,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				obs_output_release(main_output);
 				blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
 				     obs_data_get_string(settings, "name"));
-				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
-						     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
+				reportStartFailure(streamButton,
+						   QString::fromUtf8(obs_module_text("OutputStatusMainOutputNotActive")),
+						   QString::fromUtf8(obs_module_text("MainOutputNotActive")));
 				return false;
 			}
 			auto aei = (int)obs_data_get_int(settings, "audio_encoder_index");
@@ -1059,8 +1073,9 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				blog(LOG_WARNING,
 				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), aei);
-				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")),
-						     QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
+				reportStartFailure(
+					streamButton, QString::fromUtf8(obs_module_text("OutputStatusEncoderIndexNotFound")),
+					QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
 				return false;
 			}
 		} else {
@@ -1085,8 +1100,8 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			obs_output_release(main_output);
 			blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
 			     obs_data_get_string(settings, "name"));
-			QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
-					     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
+			reportStartFailure(streamButton, QString::fromUtf8(obs_module_text("OutputStatusMainOutputNotActive")),
+					   QString::fromUtf8(obs_module_text("MainOutputNotActive")));
 			return false;
 		}
 
@@ -1184,8 +1199,6 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 
 		auto reason = QString::fromUtf8((last_error && *last_error) ? last_error
 									   : obs_module_text("OutputStatusUnknownError"));
-		setOutputStatus(streamButton, QString::fromUtf8(obs_module_text("OutputStatusStartFailed")).arg(reason), true);
-
 		signal_handler_disconnect(signal, "start", stream_output_start, this);
 		signal_handler_disconnect(signal, "stop", stream_output_stop, this);
 		signal_handler_disconnect(signal, "reconnect", stream_output_reconnect, this);
@@ -1193,9 +1206,8 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		obs_output_release(output);
 		obs_service_release(service);
 
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("OutputStartFailedTitle")),
-				     QString::fromUtf8(obs_module_text("OutputStartFailed"))
-					     .arg(QString::fromUtf8(name), reason));
+		reportStartFailure(streamButton, QString::fromUtf8(obs_module_text("OutputStatusStartFailed")).arg(reason),
+				   QString::fromUtf8(obs_module_text("OutputStartFailed")).arg(QString::fromUtf8(name), reason));
 		return false;
 	}
 
@@ -1654,7 +1666,17 @@ void MultistreamDock::vendor_request_start_output(obs_data_t *request_data, obs_
 					auto button = w->findChild<QPushButton *>(QStringLiteral("canvasStream"));
 					if (button && !button->isChecked()) {
 						QMetaObject::invokeMethod(
-							button, [button] { button->click(); }, Qt::QueuedConnection);
+							button,
+							[md, button] {
+								// Both the click and StartOutput() run
+								// to completion inside this call, on the
+								// UI thread, so the flag covers exactly
+								// this one start.
+								md->remoteStart = true;
+								button->click();
+								md->remoteStart = false;
+							},
+							Qt::QueuedConnection);
 					}
 					*sb = true;
 					return;

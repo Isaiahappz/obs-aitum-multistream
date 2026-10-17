@@ -55,6 +55,11 @@ private:
 
 	void setOutputStatus(QPushButton *button, const QString &text, bool isError);
 	void postOutputStatus(obs_output_t *output, const QString &text, bool isError);
+	void reportStartFailure(QPushButton *streamButton, const QString &status, const QString &message);
+
+	// Set for the duration of a start that came in over the websocket, where
+	// there is nobody at the keyboard to dismiss a modal dialog.
+	bool remoteStart = false;
 
 	void storeMainStreamEncoders();
 
