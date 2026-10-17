@@ -25,6 +25,29 @@ else()
   target_link_libraries(${PROJECT_NAME} PRIVATE OBS::frontend-api)
 endif()
 
+if(OS_MACOS AND NOT DEFINED CACHE{WrapOpenGL_AGL})
+  # Qt6's FindWrapOpenGL links whatever `find_library(AGL)` turns up. AGL is
+  # still present on the running system but is gone from recent macOS SDKs, and
+  # CMake reduces the hit to a bare `-framework AGL` that the linker cannot
+  # resolve inside the sysroot. When the active SDK has no AGL, point the cache
+  # variable Qt probes at OpenGL.framework instead, which leaves the downloaded
+  # Qt6 in .deps untouched.
+  set(_sysroot "${CMAKE_OSX_SYSROOT}")
+  if(NOT _sysroot)
+    execute_process(
+      COMMAND xcrun --show-sdk-path
+      OUTPUT_VARIABLE _sysroot
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+  endif()
+  if(NOT IS_DIRECTORY "${_sysroot}/System/Library/Frameworks/AGL.framework")
+    find_library(WrapOpenGL_AGL NAMES OpenGL REQUIRED)
+    message(STATUS "AGL is absent from the macOS SDK - linking OpenGL in its place")
+  endif()
+  unset(_sysroot)
+endif()
+
 find_package(Qt6 COMPONENTS Widgets Core)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
 if((OS_LINUX OR OS_FREEBSD OR OS_OPENBSD) AND Qt6_VERSION VERSION_LESS "6.9.0")
