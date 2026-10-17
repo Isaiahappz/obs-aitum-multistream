@@ -16,39 +16,11 @@
 #include <util/dstr.h>
 #include <util/platform.h>
 
-extern "C" {
-#include "file-updater.h"
-}
-
 OBS_DECLARE_MODULE()
 OBS_MODULE_AUTHOR("Aitum");
 OBS_MODULE_USE_DEFAULT_LOCALE("aitum-multistream", "en-US")
 
 static MultistreamDock *multistream_dock = nullptr;
-
-update_info_t *version_update_info = nullptr;
-
-bool version_info_downloaded(void *param, struct file_download_data *file)
-{
-	UNUSED_PARAMETER(param);
-	if (!file || !file->buffer.num) {
-		return true;
-	}
-
-	// This runs on the updater's worker thread, and the dock is deleted
-	// before obs_module_unload() joins it, so a late response can arrive
-	// with nothing left to tell.
-	if (!multistream_dock) {
-		return true;
-	}
-
-	QMetaObject::invokeMethod(multistream_dock, "ApiInfo", Q_ARG(QString, QString::fromUtf8((const char *)file->buffer.array)));
-
-	// Deliberately not destroyed here: this callback runs on the updater's
-	// own worker thread, and update_info_destroy() joins that thread.
-	// obs_module_unload() owns the handle and tears it down.
-	return true;
-}
 
 bool obs_module_load(void)
 {
@@ -58,15 +30,8 @@ bool obs_module_load(void)
 	multistream_dock = new MultistreamDock(main_window);
 	obs_frontend_add_dock_by_id("AitumMultistreamDock", obs_module_text("AitumMultistream"), multistream_dock);
 
-	std::string url = "https://api.aitum.tv/plugin/multi";
-	const char *pguid = config_get_string(obs_frontend_get_app_config(), "General", "InstallGUID");
-	if (pguid) {
-		url += "?uuid=";
-		url += pguid;
-	}
-
-	version_update_info =
-		update_info_create_single("[Aitum Multistream]", "OBS", url.c_str(), version_info_downloaded, nullptr);
+	// Nothing is fetched at startup: the plugin opens no connection of its
+	// own, so the only traffic it causes is the streams themselves.
 	return true;
 }
 
@@ -80,10 +45,6 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
-	if (version_update_info) {
-		update_info_destroy(version_update_info);
-		version_update_info = nullptr;
-	}
 	if (multistream_dock) {
 		delete multistream_dock;
 	}
@@ -479,7 +440,6 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 		configDialog->LoadSettings(settings);
 		configDialog->LoadVerticalSettings(true);
 		configDialog->LoadOutputStats(&oldVideo);
-		configDialog->SetNewerVersion(newer_version_available);
 		configDialog->setResult(QDialog::Rejected);
 		if (configDialog->exec() == QDialog::Accepted) {
 			if (current_config) {
@@ -497,25 +457,11 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 		}
 	});
 
+	// The dock's only control that is not a stream: the two icon-only links
+	// that used to sit beside it opened aitum.tv in a browser, which is not
+	// something anyone running a service needs mid-stream. Aitum's
+	// attribution and the support page stay in the settings dialog.
 	buttonRow->addWidget(configButton, 1);
-
-	// Contribute Button
-	auto contributeButton = new QPushButton;
-	contributeButton->setMinimumHeight(30);
-	contributeButton->setIcon(ConfigUtils::generateEmojiQIcon("❤️"));
-	contributeButton->setToolTip(QString::fromUtf8(obs_module_text("AitumMultistreamDonate")));
-	QPushButton::connect(contributeButton, &QPushButton::clicked,
-			     [] { QDesktopServices::openUrl(QUrl("https://aitum.tv/contribute")); });
-	buttonRow->addWidget(contributeButton);
-
-	// Aitum Button
-	auto aitumButton = new QPushButton;
-	aitumButton->setMinimumHeight(30);
-	//aitumButton->setSizePolicy(sp2);
-	aitumButton->setIcon(QIcon(":/aitum/media/aitum.png"));
-	aitumButton->setToolTip(QString::fromUtf8("https://aitum.tv"));
-	QPushButton::connect(aitumButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://aitum.tv")); });
-	buttonRow->addWidget(aitumButton);
 
 	mainLayout->addLayout(buttonRow);
 
@@ -652,9 +598,6 @@ void MultistreamDock::frontend_event(enum obs_frontend_event event, void *privat
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
 		md->finished_loading = true;
 		md->LoadSettingsFile();
-		if (!md->newer_version_available.isEmpty()) {
-			md->AskUpdate();
-		}
 	} else if (event == OBS_FRONTEND_EVENT_PROFILE_CHANGED) {
 		md->LoadSettingsFile();
 	} else if (event == OBS_FRONTEND_EVENT_PROFILE_CHANGING || event == OBS_FRONTEND_EVENT_PROFILE_RENAMED) {
@@ -700,8 +643,6 @@ void MultistreamDock::LoadSettingsFile()
 	} else {
 		blog(LOG_INFO, "[Aitum Multistream] Loaded configuration file");
 	}
-	partnerBlockTime = obs_data_get_int(config, "partner_block");
-
 	auto profiles = obs_data_get_array(config, "profiles");
 	auto pc = obs_data_array_count(profiles);
 	obs_data_t *pd = nullptr;
@@ -1029,7 +970,6 @@ void MultistreamDock::SaveSettings()
 		config = obs_data_create();
 		blog(LOG_WARNING, "[Aitum Multistream] New configuration file");
 	}
-	obs_data_set_int(config, "partner_block", partnerBlockTime);
 	auto profiles = obs_data_get_array(config, "profiles");
 	if (!profiles) {
 		profiles = obs_data_array_create();
@@ -1525,91 +1465,6 @@ void MultistreamDock::stream_output_reconnect_success(void *data, calldata_t *ca
 	md->postOutputStatus(output, QString::fromUtf8(obs_module_text("OutputStatusReconnected")), OutputStatus::Normal);
 }
 
-void MultistreamDock::ApiInfo(QString info)
-{
-	auto d = obs_data_create_from_json(info.toUtf8().constData());
-	if (!d) {
-		return;
-	}
-	auto data_obj = obs_data_get_obj(d, "data");
-	obs_data_release(d);
-	if (!data_obj) {
-		return;
-	}
-	auto version = obs_data_get_string(data_obj, "version");
-	int major;
-	int minor;
-	int patch;
-	if (sscanf(version, "%d.%d.%d", &major, &minor, &patch) == 3) {
-		auto sv = MAKE_SEMANTIC_VERSION(major, minor, patch);
-		if (sv > MAKE_SEMANTIC_VERSION(PROJECT_VERSION_MAJOR, PROJECT_VERSION_MINOR, PROJECT_VERSION_PATCH)) {
-			newer_version_available = QString::fromUtf8(version);
-			configButton->setStyleSheet(QString::fromUtf8("background: rgb(192,128,0);"));
-			if (finished_loading) {
-				AskUpdate();
-			}
-		}
-	}
-	time_t current_time = time(nullptr);
-	if (current_time < partnerBlockTime || current_time - partnerBlockTime > 1209600) {
-		obs_data_array_t *blocks = obs_data_get_array(data_obj, "partnerBlocks");
-		size_t count = obs_data_array_count(blocks);
-		size_t added_count = 0;
-		for (size_t i = count; i > 0; i--) {
-			obs_data_t *block = obs_data_array_item(blocks, i - 1);
-			auto block_type = obs_data_get_string(block, "type");
-			QBoxLayout *layout = nullptr;
-			if (strcmp(block_type, "LINK") == 0) {
-				auto button = new QPushButton(QString::fromUtf8(obs_data_get_string(block, "label")));
-				button->setStyleSheet(QString::fromUtf8(obs_data_get_string(block, "qss")));
-				auto url = QString::fromUtf8(obs_data_get_string(block, "data"));
-				connect(button, &QPushButton::clicked, [url] { QDesktopServices::openUrl(QUrl(url)); });
-				auto buttonRow = new QHBoxLayout;
-				buttonRow->setContentsMargins(8, 0, 8, 0);
-				buttonRow->setSpacing(8);
-				buttonRow->addWidget(button);
-				layout = buttonRow;
-			} else if (strcmp(block_type, "IMAGE") == 0) {
-				auto image_data = QString::fromUtf8(obs_data_get_string(block, "data"));
-				if (image_data.startsWith("data:image/")) {
-					auto pos = image_data.indexOf(";");
-					auto format = image_data.mid(11, pos - 11);
-					QImage image;
-					if (image.loadFromData(QByteArray::fromBase64(image_data.mid(pos + 7).toUtf8().constData()),
-							       format.toUtf8().constData())) {
-						auto label = new AspectRatioPixmapLabel;
-						label->setPixmap(QPixmap::fromImage(image));
-						label->setAlignment(Qt::AlignCenter);
-						label->setStyleSheet(QString::fromUtf8(obs_data_get_string(block, "qss")));
-						auto labelRow = new QHBoxLayout;
-						labelRow->addWidget(label, 1, Qt::AlignCenter);
-						layout = labelRow;
-					}
-				}
-			}
-			if (layout) {
-				added_count++;
-				if (i == 1) {
-					auto closeButton = new QPushButton("🞫");
-					connect(closeButton, &QPushButton::clicked, [this, added_count] {
-						for (size_t j = 0; j < added_count; j++) {
-							auto item = mainLayout->takeAt(1);
-							RemoveLayoutItem(item);
-						}
-						partnerBlockTime = time(nullptr);
-						SaveSettings();
-					});
-					layout->addWidget(closeButton);
-				}
-				mainLayout->insertLayout(1, layout, 0);
-			}
-			obs_data_release(block);
-		}
-		obs_data_array_release(blocks);
-	}
-	obs_data_release(data_obj);
-}
-
 void MultistreamDock::LoadVerticalOutputs(bool firstLoad)
 {
 	auto ph = obs_get_proc_handler();
@@ -1684,60 +1539,6 @@ void MultistreamDock::storeMainStreamEncoders()
 		}
 	}
 	obs_output_release(output);
-}
-
-void MultistreamDock::AskUpdate()
-{
-	auto parts = newer_version_available.split(".");
-	if (parts.count() < 3) {
-		return;
-	}
-	int major = parts.value(0).toInt();
-	int minor = parts.value(1).toInt();
-	int patch = parts.value(2).toInt();
-	auto sv = MAKE_SEMANTIC_VERSION(major, minor, patch);
-
-	char *path = obs_module_config_path("config.json");
-	if (!path) {
-		return;
-	}
-
-	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
-
-	auto skip_version = config ? obs_data_get_int(config, "skip_version") : 0;
-	if (sv == skip_version) {
-		obs_data_release(config);
-		bfree(path);
-		return;
-	}
-
-	auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-
-	QMessageBox mb(QMessageBox::Question, QString::fromUtf8(obs_frontend_get_locale_string("Updater.Title")),
-		       QString::fromUtf8(obs_frontend_get_locale_string("Updater.Text")) + " " +
-			       QString::fromUtf8(obs_module_text("AitumMultistream")) + " " + newer_version_available,
-		       QMessageBox::StandardButtons(), main_window);
-	auto update = mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.UpdateNow")), QMessageBox::YesRole);
-	auto remind =
-		mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.RemindMeLater")), QMessageBox::RejectRole);
-	auto skip = mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.Skip")), QMessageBox::NoRole);
-	mb.setDefaultButton(remind);
-	mb.exec();
-	if (mb.clickedButton() == update) {
-		QDesktopServices::openUrl(QUrl(QString::fromUtf8("https://aitum.tv/download/multi")));
-	} else if (mb.clickedButton() == skip) {
-		if (!config) {
-			config = obs_data_create();
-		}
-		obs_data_set_int(config, "skip_version", sv);
-		if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
-			blog(LOG_INFO, "[Aitum Multistream] Saved settings");
-		} else {
-			blog(LOG_ERROR, "[Aitum Multistream] Failed saving settings");
-		}
-	}
-	obs_data_release(config);
-	bfree(path);
 }
 
 void MultistreamDock::LoadWebsocket()
@@ -1951,41 +1752,5 @@ void MultistreamDock::vendor_request_stop_output(obs_data_t *request_data, obs_d
 	} else {
 		obs_data_set_string(response_data, "error", "Output not found");
 		obs_data_set_bool(response_data, "success", false);
-	}
-}
-
-AspectRatioPixmapLabel::AspectRatioPixmapLabel(QWidget *parent) : QLabel(parent)
-{
-	setMinimumSize(1, 1);
-	setScaledContents(false);
-}
-
-void AspectRatioPixmapLabel::setPixmap(const QPixmap &p)
-{
-	pix = p;
-	QLabel::setPixmap(scaledPixmap());
-}
-
-int AspectRatioPixmapLabel::heightForWidth(int width) const
-{
-	return pix.isNull() ? height() : (pix.height() * width) / pix.width();
-}
-
-QSize AspectRatioPixmapLabel::sizeHint() const
-{
-	int w = width();
-	return QSize(w, heightForWidth(w));
-}
-
-QPixmap AspectRatioPixmapLabel::scaledPixmap() const
-{
-	return pix.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-}
-
-void AspectRatioPixmapLabel::resizeEvent(QResizeEvent *e)
-{
-	UNUSED_PARAMETER(e);
-	if (!pix.isNull()) {
-		QLabel::setPixmap(scaledPixmap());
 	}
 }

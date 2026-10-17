@@ -31,9 +31,6 @@ private:
 	QLabel *mainPlatformIconLabel = nullptr;
 	QString mainPlatformUrl;
 
-	QString newer_version_available;
-	time_t partnerBlockTime = 0;
-
 	QTimer videoCheckTimer;
 	video_t *mainVideo = nullptr;
 	std::vector<video_t *> oldVideo;
@@ -71,8 +68,6 @@ private:
 
 	void storeMainStreamEncoders();
 
-	void AskUpdate();
-
 	QIcon streamActiveIcon = QIcon(":/aitum/media/streaming.svg");
 	QIcon streamInactiveIcon = QIcon(":/aitum/media/stream.svg");
 
@@ -88,27 +83,9 @@ private:
 	static void vendor_request_start_output(obs_data_t *request_data, obs_data_t *response_data, void *self);
 	static void vendor_request_stop_output(obs_data_t *request_data, obs_data_t *response_data, void *self);
 
-private slots:
-	void ApiInfo(QString info);
-
 public:
 	MultistreamDock(QWidget *parent = nullptr);
 	~MultistreamDock();
 	void LoadVerticalOutputs(bool firstLoad = true);
 	void LoadWebsocket();
-};
-
-class AspectRatioPixmapLabel : public QLabel {
-	Q_OBJECT
-public:
-	explicit AspectRatioPixmapLabel(QWidget *parent = 0);
-	virtual int heightForWidth(int width) const;
-	virtual QSize sizeHint() const;
-	QPixmap scaledPixmap() const;
-public slots:
-	void setPixmap(const QPixmap &);
-	void resizeEvent(QResizeEvent *);
-
-private:
-	QPixmap pix;
 };

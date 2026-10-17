@@ -53,7 +53,6 @@ private:
 
 	QFormLayout *mainOutputsLayout;
 	QFormLayout *verticalOutputsLayout;
-	QLabel *newVersion;
 
 	QTextEdit *troubleshooterText;
 
@@ -82,7 +81,6 @@ public:
 	void LoadVerticalSettings(bool load);
 	void SaveVerticalSettings();
 	void LoadOutputStats(std::vector<video_t *> *oldVideos);
-	void SetNewerVersion(QString newer_version_available);
 
 public slots:
 };
