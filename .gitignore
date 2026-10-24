@@ -4,6 +4,7 @@
 /build_*/
 /release/
 /installer/Output/
+/dist/
 
 .vscode
 .idea

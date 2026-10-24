@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<installer-gui-script minSpecVersion="1.0">
+    <title>@DISPLAY_NAME@</title>
+    <organization>@BUNDLE_ID@</organization>
+    <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64" allow-external-scripts="no" />
+    <!-- Installs into the home folder of whoever runs the installer, so no
+         administrator password is needed and nothing outside that home folder
+         is written. -->
+    <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false" />
+    <welcome file="welcome.html" mime-type="text/html" />
+    <conclusion file="conclusion.html" mime-type="text/html" />
+    <choices-outline>
+        <line choice="default">
+            <line choice="@BUNDLE_ID@" />
+        </line>
+    </choices-outline>
+    <choice id="default" />
+    <choice id="@BUNDLE_ID@" visible="false">
+        <pkg-ref id="@BUNDLE_ID@" />
+    </choice>
+    <pkg-ref id="@BUNDLE_ID@" version="@VERSION@">#@PLUGIN_NAME@.pkg</pkg-ref>
+    <installation-check script="installCheck();" />
+    <script>
+        function installCheck() {
+            if (system.compareVersions(system.version.ProductVersion, '@MACOS_MIN@') &lt; 0) {
+                my.result.title = 'This Mac needs a newer macOS';
+                my.result.message = 'Aitum Multistream needs macOS @MACOS_MIN@ or newer, '
+                                  + 'because OBS Studio 33 does.';
+                my.result.type = 'Fatal';
+                return false;
+            }
+            return true;
+        }
+    </script>
+</installer-gui-script>

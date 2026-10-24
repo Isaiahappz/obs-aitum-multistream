@@ -48,7 +48,8 @@ if(OS_MACOS AND NOT DEFINED CACHE{WrapOpenGL_AGL})
   unset(_sysroot)
 endif()
 
-find_package(Qt6 COMPONENTS Widgets Core)
+# OBS 33 dropped Qt 6.4-6.9; its macOS builds ship Qt 6.11.
+find_package(Qt6 6.10 REQUIRED COMPONENTS Widgets Core)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
 if((OS_LINUX OR OS_FREEBSD OR OS_OPENBSD) AND Qt6_VERSION VERSION_LESS "6.9.0")
 	find_package(Qt6 COMPONENTS GuiPrivate)

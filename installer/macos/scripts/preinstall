@@ -1,0 +1,275 @@
+#!/bin/sh
+# Aitum Multistream - installer pre-flight checks.
+#
+# Refuses the install unless OBS Studio 33.0.0 or newer is on this Mac, asks
+# the operator to quit OBS first, then clears out any older copy of the plugin
+# so OBS can never load two of them.
+#
+# Nothing here touches OBS settings: basic/ (profiles, scenes, service.json),
+# global.ini, user.ini and plugin_config/ are never read or written. Stream
+# keys and saved Aitum outputs live in plugin_config/aitum-multistream and are
+# left exactly as they are.
+#
+# Exiting non-zero aborts the install.
+
+set -u
+
+MIN_VERSION="33.0.0"
+MIN_DISPLAY="33.0"
+DOWNLOAD_PAGE="https://obsproject.com/download"
+PLUGIN_NAME="aitum-multistream"
+OBS_BUNDLE_ID="com.obsproject.obs-studio"
+DIALOG_TITLE="Aitum Multistream"
+QUIT_WAIT_SECONDS=30
+
+# AppleScript dialog icons. These have to be numbers: handing "stop" to a run
+# handler as a string makes AppleScript hunt for an icon resource of that name
+# and fail with -192.
+ICON_STOP=0
+ICON_CAUTION=2
+
+log() { printf '[aitum-multistream preinstall] %s\n' "$*" >&2; }
+
+# --- who to show dialogs to ------------------------------------------------
+# A home-directory install runs these scripts as the user, but be ready for a
+# root context too, so a dialog is never sent to a session nobody is looking at.
+console_user=$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || printf '')
+case "$console_user" in
+	'' | root | loginwindow) console_user='' ;;
+esac
+console_uid=''
+if [ -n "$console_user" ]; then
+	console_uid=$(/usr/bin/id -u "$console_user" 2>/dev/null || printf '')
+fi
+
+am_root() { [ "$(/usr/bin/id -u)" -eq 0 ]; }
+
+as_user() {
+	if am_root && [ -n "$console_uid" ]; then
+		/bin/launchctl asuser "$console_uid" /usr/bin/sudo -u "$console_user" "$@"
+	else
+		"$@"
+	fi
+}
+
+# ask MESSAGE ICON BUTTON_A BUTTON_B -> prints the button that was clicked
+ask() {
+	_msg="$1"
+	_icon="$2"
+	_a="$3"
+	_b="$4"
+	as_user /usr/bin/osascript \
+		-e 'on run {msg, ttl, icn, btnA, btnB}' \
+		-e 'display dialog msg with title ttl buttons {btnA, btnB} default button btnB with icon (icn as integer)' \
+		-e 'return button returned of result' \
+		-e 'end run' \
+		-- "$_msg" "$DIALOG_TITLE" "$_icon" "$_a" "$_b" 2>/dev/null || printf '%s' "$_a"
+}
+
+# tell MESSAGE ICON -> single OK button
+tell_user() {
+	as_user /usr/bin/osascript \
+		-e 'on run {msg, ttl, icn}' \
+		-e 'display dialog msg with title ttl buttons {"OK"} default button "OK" with icon (icn as integer)' \
+		-e 'end run' \
+		-- "$1" "$DIALOG_TITLE" "$2" >/dev/null 2>&1 || true
+}
+
+# --- where we are installing ----------------------------------------------
+# $3 is the install destination; for a home-domain install that is the home
+# directory. Fall back to $HOME, then to the console user's home.
+target_home=''
+if [ "$#" -ge 3 ] && [ -n "${3:-}" ] && [ "$3" != "/" ] && [ -d "$3/Library" ]; then
+	target_home="$3"
+elif ! am_root && [ -n "${HOME:-}" ] && [ -d "$HOME/Library" ]; then
+	target_home="$HOME"
+elif [ -n "$console_user" ]; then
+	target_home=$(/usr/bin/dscl . -read "/Users/$console_user" NFSHomeDirectory 2>/dev/null |
+		/usr/bin/sed -n 's/^NFSHomeDirectory: //p')
+fi
+
+if [ -z "$target_home" ] || [ ! -d "$target_home" ]; then
+	log "could not work out which home directory to install into"
+	tell_user "The installer could not work out where to install. Please sign in as the person who uses OBS and try again." "$ICON_STOP"
+	exit 1
+fi
+log "install home: $target_home"
+
+# --- version arithmetic ----------------------------------------------------
+# Compare numerically, so 33.0.0 > 32.2.2 and 33.10.0 > 33.9.0.
+version_number() {
+	printf '%s\n' "${1:-0}" | /usr/bin/awk -F'[^0-9]+' '
+		{ printf "%d\n", ($1 + 0) * 1000000 + ($2 + 0) * 1000 + ($3 + 0) }'
+}
+
+obs_version_at() {
+	_plist="$1/Contents/Info.plist"
+	[ -f "$_plist" ] || return 1
+	_v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$_plist" 2>/dev/null)
+	if [ -z "$_v" ]; then
+		_v=$(/usr/bin/defaults read "$1/Contents/Info" CFBundleShortVersionString 2>/dev/null)
+	fi
+	[ -n "$_v" ] || return 1
+	printf '%s\n' "$_v"
+}
+
+# Candidate copies of OBS, most likely first. AITUM_OBS_APP_PATHS replaces the
+# list and exists only so the check can be exercised against a stand-in
+# OBS.app; Installer.app never sets it.
+if [ -n "${AITUM_OBS_APP_PATHS:-}" ]; then
+	candidates="$AITUM_OBS_APP_PATHS"
+else
+	candidates="/Applications/OBS.app
+$target_home/Applications/OBS.app"
+fi
+
+best_path=''
+best_version=''
+best_number=0
+
+consider() {
+	_app="$1"
+	[ -d "$_app" ] || return 0
+	_ver=$(obs_version_at "$_app") || {
+		log "no CFBundleShortVersionString in $_app"
+		return 0
+	}
+	_num=$(version_number "$_ver")
+	log "found OBS $_ver at $_app"
+	if [ "$_num" -gt "$best_number" ]; then
+		best_path="$_app"
+		best_version="$_ver"
+		best_number="$_num"
+	fi
+}
+
+oldIFS="$IFS"
+IFS='
+'
+for app in $candidates; do
+	IFS="$oldIFS"
+	[ -n "$app" ] && consider "$app"
+	IFS='
+'
+done
+IFS="$oldIFS"
+
+# Last resort: Spotlight, in case OBS lives somewhere unusual.
+if [ -z "$best_path" ] && [ -z "${AITUM_OBS_APP_PATHS:-}" ]; then
+	spotlight=$(/usr/bin/mdfind "kMDItemCFBundleIdentifier == '$OBS_BUNDLE_ID'" 2>/dev/null || printf '')
+	oldIFS="$IFS"
+	IFS='
+'
+	for app in $spotlight; do
+		IFS="$oldIFS"
+		case "$app" in
+			*/.Trash/* | '') ;;
+			*) consider "$app" ;;
+		esac
+		IFS='
+'
+	done
+	IFS="$oldIFS"
+fi
+
+min_number=$(version_number "$MIN_VERSION")
+
+if [ -z "$best_path" ] || [ "$best_number" -lt "$min_number" ]; then
+	if [ -z "$best_path" ]; then
+		found_line="No copy of OBS Studio was found on this Mac."
+		log "OBS not found - blocking install"
+	else
+		found_line="This Mac has OBS Studio $best_version."
+		log "OBS $best_version is older than $MIN_VERSION - blocking install"
+	fi
+	message="OBS Studio $MIN_DISPLAY or newer is required. Please update OBS, then run this installer again.
+
+$found_line"
+	clicked=$(ask "$message" "$ICON_STOP" "Cancel" "Open OBS Download Page")
+	if [ "$clicked" = "Open OBS Download Page" ]; then
+		as_user /usr/bin/open "$DOWNLOAD_PAGE" >/dev/null 2>&1 || true
+	fi
+	exit 1
+fi
+
+log "OBS $best_version at $best_path meets the $MIN_VERSION minimum"
+
+# --- is OBS open? ----------------------------------------------------------
+obs_running() {
+	/usr/bin/pgrep -x OBS >/dev/null 2>&1 ||
+		/usr/bin/pgrep -f '/OBS\.app/Contents/MacOS/OBS$' >/dev/null 2>&1
+}
+
+if obs_running; then
+	log "OBS is running"
+	clicked=$(ask "OBS Studio is open. It needs to be closed before the plugin can be replaced.
+
+Quitting OBS does not change your scenes or stream keys." "$ICON_CAUTION" "Cancel" "Quit OBS")
+	if [ "$clicked" != "Quit OBS" ]; then
+		log "operator cancelled at the quit-OBS prompt"
+		exit 1
+	fi
+
+	# Ask OBS to quit the same way the menu does, so it saves its scenes. We
+	# never kill it.
+	as_user /usr/bin/osascript -e "tell application id \"$OBS_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+
+	waited=0
+	while obs_running && [ "$waited" -lt "$QUIT_WAIT_SECONDS" ]; do
+		/bin/sleep 1
+		waited=$((waited + 1))
+	done
+
+	if obs_running; then
+		log "OBS is still running after ${QUIT_WAIT_SECONDS}s - blocking install"
+		tell_user "OBS Studio is still open. Please quit OBS yourself (OBS menu ▸ Quit OBS), then run this installer again." "$ICON_STOP"
+		exit 1
+	fi
+	log "OBS quit after ${waited}s"
+fi
+
+# --- clear out older copies of the plugin ----------------------------------
+plugins_dir="$target_home/Library/Application Support/obs-studio/plugins"
+
+# Only ever delete these exact names, under a path that ends in
+# obs-studio/plugins. Anything else is refused.
+remove_old_copy() {
+	_path="$1"
+	case "$_path" in
+		*"/obs-studio/plugins/$PLUGIN_NAME.plugin" | \
+		*"/obs-studio/plugins/$PLUGIN_NAME.plugin.dSYM" | \
+		*"/obs-studio/plugins/$PLUGIN_NAME") ;;
+		*)
+			log "refusing to remove an unexpected path: $_path"
+			return 0
+			;;
+	esac
+	[ -e "$_path" ] || return 0
+	log "removing older copy: $_path"
+	/bin/rm -rf -- "$_path" || {
+		log "could not remove $_path"
+		tell_user "The installer could not remove the older copy of the plugin at:
+
+$_path
+
+Please remove it by hand, then run this installer again." "$ICON_STOP"
+		return 1
+	}
+}
+
+remove_old_copy "$plugins_dir/$PLUGIN_NAME.plugin" || exit 1
+remove_old_copy "$plugins_dir/$PLUGIN_NAME.plugin.dSYM" || exit 1
+# Pre-bundle layout: plugins/<name>/bin/<name>.so plus plugins/<name>/data
+remove_old_copy "$plugins_dir/$PLUGIN_NAME" || exit 1
+
+# A machine-wide copy would need an administrator to remove, and OBS 33 only
+# scans that location on Intel Macs for the old .so layout. Note it in the log
+# rather than nagging the operator about something they probably cannot fix.
+for stray in \
+	"/Library/Application Support/obs-studio/plugins/$PLUGIN_NAME.plugin" \
+	"/Library/Application Support/obs-studio/plugins/$PLUGIN_NAME"; do
+	[ -e "$stray" ] && log "note: a machine-wide copy is also present at $stray"
+done
+
+log "pre-flight checks passed"
+exit 0
