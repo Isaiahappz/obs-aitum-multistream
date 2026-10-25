@@ -4,15 +4,15 @@
 #   scripts/build-mac-installer.sh [options]
 #
 #     --skip-build            Package whatever is already in build_macos/
-#     --no-sign               Do not sign the plugin or the package
-#     --notarize              Submit the package to Apple and staple the ticket
+#     --no-sign               Do not sign the plugin, the uninstaller or the package
+#     --notarize              Submit to Apple and staple the tickets
 #     --notary-profile NAME   notarytool keychain profile (default: $NOTARY_PROFILE)
 #     --team-id ID            Signing team (default: S84JSLP7M7)
 #     -h, --help
 #
 # Produces, in dist/:
 #     Aitum Multistream Installer.pkg
-#     Uninstall Aitum Multistream.command
+#     Uninstall Aitum Multistream.app
 #     Aitum-Multistream-mac.zip        both of the above, plus a README
 #
 # The package installs into the home folder of whoever runs it, so no
@@ -28,7 +28,7 @@ BUILD_DIR="$SOURCE_DIR/build_macos"
 DIST_DIR="$SOURCE_DIR/dist"
 WORK_DIR="$DIST_DIR/.work"
 INSTALLER_DIR="$SOURCE_DIR/installer/macos"
-UNINSTALLER="$INSTALLER_DIR/uninstall/Uninstall Aitum Multistream.command"
+UNINSTALL_SRC="$INSTALLER_DIR/uninstall"
 
 TEAM_ID="S84JSLP7M7"
 MACOS_MIN="13.0"
@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 			shift
 			;;
 		-h | --help)
-			sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+			sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 			exit 0
 			;;
 		*) die "unknown option: $1" ;;
@@ -90,10 +90,14 @@ PY
 	read -r BUNDLE_ID
 } < <(read_buildspec)
 
-[[ -n "$PLUGIN_NAME" && -n "$VERSION" && -n "$BUNDLE_ID" ]] || die "could not read buildspec.json"
+[[ -n "$PLUGIN_NAME" && -n "$DISPLAY_NAME" && -n "$VERSION" && -n "$BUNDLE_ID" ]] ||
+	die "could not read buildspec.json"
 
 PKG_NAME="$DISPLAY_NAME Installer.pkg"
 BUNDLE_NAME="$PLUGIN_NAME.plugin"
+UNINSTALLER_NAME="Uninstall $DISPLAY_NAME.app"
+UNINSTALLER_ID="$BUNDLE_ID.uninstaller"
+ZIP_NAME="Aitum-Multistream-mac.zip"
 # The one location OBS 33 loads third-party plugins from on macOS, relative to
 # the install domain (the user's home folder).
 INSTALL_SUBPATH="Library/Application Support/obs-studio/plugins"
@@ -113,7 +117,7 @@ if ((want_sign)); then
 fi
 
 if [[ -n "$app_identity" ]]; then
-	say "signing the plugin with: $app_identity"
+	say "signing the plugin and the uninstaller with: $app_identity"
 else
 	warn "no 'Developer ID Application' identity for team $TEAM_ID - the plugin will be ad-hoc signed"
 fi
@@ -128,6 +132,7 @@ fi
 
 if ((want_notarize)); then
 	[[ -n "$installer_identity" ]] || die "--notarize needs a signed package, and there is no Developer ID Installer identity"
+	[[ -n "$app_identity" ]] || die "--notarize needs a signed uninstaller, and there is no Developer ID Application identity"
 	[[ -n "$notary_profile" ]] || die "--notarize needs --notary-profile NAME (or \$NOTARY_PROFILE)"
 fi
 
@@ -163,12 +168,60 @@ if [[ "$built_version" != "$VERSION" ]]; then
 	note "re-run without --skip-build to pick up the version change"
 fi
 
+# ------------------------------------------------------------- uninstaller --
+# A double-clickable app rather than a .command: volunteers get native dialogs
+# instead of a Terminal window, and an app bundle can be notarized and stapled,
+# which a bare script cannot.
+plist_set() {
+	# plist_set FILE KEY TYPE VALUE...  (replaces the key if it is already there)
+	local file="$1" key="$2" type="$3"
+	shift 3
+	/usr/libexec/PlistBuddy -c "Delete :$key" "$file" >/dev/null 2>&1 || true
+	/usr/libexec/PlistBuddy -c "Add :$key $type $*" "$file" >/dev/null
+}
+
+say "building $UNINSTALLER_NAME"
+mkdir -p "${WORK_DIR:?}"
+UNINSTALLER_APP="$WORK_DIR/$UNINSTALLER_NAME"
+rm -rf "${UNINSTALLER_APP:?}"
+osacompile -o "$UNINSTALLER_APP" "$UNINSTALL_SRC/uninstall-app.applescript"
+
+ditto "$UNINSTALL_SRC/uninstall-core.sh" "$UNINSTALLER_APP/Contents/Resources/uninstall-core.sh"
+chmod 755 "$UNINSTALLER_APP/Contents/Resources/uninstall-core.sh"
+
+uninstaller_plist="$UNINSTALLER_APP/Contents/Info.plist"
+plist_set "$uninstaller_plist" CFBundleIdentifier string "$UNINSTALLER_ID"
+plist_set "$uninstaller_plist" CFBundleName string "Uninstall $DISPLAY_NAME"
+plist_set "$uninstaller_plist" CFBundleDisplayName string "Uninstall $DISPLAY_NAME"
+plist_set "$uninstaller_plist" CFBundleShortVersionString string "$VERSION"
+plist_set "$uninstaller_plist" CFBundleVersion string "$VERSION"
+plist_set "$uninstaller_plist" LSMinimumSystemVersion string "$MACOS_MIN"
+plist_set "$uninstaller_plist" NSHighResolutionCapable bool true
+# osacompile stocks the plist with permission prompts for the camera, the
+# microphone, Siri and the rest. This uninstaller asks the system for none of
+# them, and a volunteer should never see a string suggesting otherwise.
+/usr/libexec/PlistBuddy -c 'Delete :LSMinimumSystemVersionByArchitecture' \
+	"$uninstaller_plist" >/dev/null 2>&1 || true
+for usage in AppleEvents AppleMusic Calendars Camera Contacts HomeKit Microphone \
+	PhotoLibrary Reminders Siri SystemAdministration; do
+	/usr/libexec/PlistBuddy -c "Delete :NS${usage}UsageDescription" \
+		"$uninstaller_plist" >/dev/null 2>&1 || true
+done
+
+if [[ -n "$app_identity" ]]; then
+	codesign --force --sign "$app_identity" --identifier "$UNINSTALLER_ID" \
+		--options runtime --timestamp "$UNINSTALLER_APP"
+	codesign --verify --deep --strict --verbose=1 "$UNINSTALLER_APP"
+else
+	codesign --force --sign - --identifier "$UNINSTALLER_ID" "$UNINSTALLER_APP"
+fi
+
 # ----------------------------------------------------------------- payload --
 say "assembling the payload"
-rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/payload/$INSTALL_SUBPATH" "$WORK_DIR/pkgs" "$WORK_DIR/scripts"
 
 # ditto, not cp: it keeps the bundle's signature and symlinks intact.
+rm -rf "${WORK_DIR:?}/payload/${INSTALL_SUBPATH:?}/${BUNDLE_NAME:?}"
 ditto "$PLUGIN_BUNDLE" "$WORK_DIR/payload/$INSTALL_SUBPATH/$BUNDLE_NAME"
 xattr -dr com.apple.quarantine "$WORK_DIR/payload" >/dev/null 2>&1 || true
 
@@ -200,8 +253,8 @@ sed -e "s|@DISPLAY_NAME@|$DISPLAY_NAME|g" \
 	-e "s|@MACOS_MIN@|$MACOS_MIN|g" \
 	"$INSTALLER_DIR/distribution.xml.in" > "$WORK_DIR/distribution.xml"
 
-mkdir -p "$DIST_DIR"
-rm -f "$DIST_DIR/$PKG_NAME"
+mkdir -p "${DIST_DIR:?}"
+rm -f "${DIST_DIR:?}/${PKG_NAME:?}"
 
 productbuild_args=(
 	--distribution "$WORK_DIR/distribution.xml"
@@ -215,24 +268,33 @@ productbuild "${productbuild_args[@]}" "$DIST_DIR/$PKG_NAME"
 
 # ---------------------------------------------------------------- notarize --
 if ((want_notarize)); then
-	say "submitting to Apple for notarization (profile: $notary_profile)"
+	say "submitting the package to Apple (profile: $notary_profile)"
 	xcrun notarytool submit "$DIST_DIR/$PKG_NAME" \
 		--keychain-profile "$notary_profile" --wait
-	say "stapling the ticket"
+
+	# An app has to travel to the notary service inside an archive; the ticket
+	# is then stapled to the app itself, not to the archive.
+	say "submitting the uninstaller to Apple"
+	rm -f "${WORK_DIR:?}/uninstaller-notarize.zip"
+	ditto -c -k --sequesterRsrc --keepParent "$UNINSTALLER_APP" "$WORK_DIR/uninstaller-notarize.zip"
+	xcrun notarytool submit "$WORK_DIR/uninstaller-notarize.zip" \
+		--keychain-profile "$notary_profile" --wait
+
+	say "stapling the tickets"
 	xcrun stapler staple "$DIST_DIR/$PKG_NAME"
-	xcrun stapler validate "$DIST_DIR/$PKG_NAME"
+	xcrun stapler staple "$UNINSTALLER_APP"
 fi
 
 # --------------------------------------------------------------------- zip --
 say "assembling dist/"
-ditto "$UNINSTALLER" "$DIST_DIR/$(basename "$UNINSTALLER")"
-chmod 755 "$DIST_DIR/$(basename "$UNINSTALLER")"
+rm -rf "${DIST_DIR:?}/${UNINSTALLER_NAME:?}"
+ditto "$UNINSTALLER_APP" "$DIST_DIR/$UNINSTALLER_NAME"
 
 STAGE="$WORK_DIR/zip/$DISPLAY_NAME for OBS"
+rm -rf "${WORK_DIR:?}/zip"
 mkdir -p "$STAGE"
 ditto "$DIST_DIR/$PKG_NAME" "$STAGE/$PKG_NAME"
-ditto "$UNINSTALLER" "$STAGE/$(basename "$UNINSTALLER")"
-chmod 755 "$STAGE/$(basename "$UNINSTALLER")"
+ditto "$UNINSTALLER_APP" "$STAGE/$UNINSTALLER_NAME"
 
 cat > "$STAGE/READ ME FIRST.txt" <<READ_ME
 $DISPLAY_NAME $VERSION for OBS Studio
@@ -245,13 +307,11 @@ TO INSTALL
      No administrator password is needed.
   4. Open OBS, then choose Docks in the menu bar and tick $DISPLAY_NAME.
 
-IF macOS REFUSES TO OPEN THE INSTALLER
-  Right-click (or Control-click) the installer, choose Open, then Open again.
-
 TO REMOVE IT LATER
-  Double-click "$(basename "$UNINSTALLER")". It asks before it
-  deletes anything, and it keeps your outputs and stream keys unless you tell
-  it otherwise.
+  1. Quit OBS Studio.
+  2. Open "$UNINSTALLER_NAME".
+     It asks before it deletes anything, and it keeps your outputs and stream
+     keys unless you tell it otherwise.
 
 WHAT IS AND IS NOT CHANGED
   Installed:  ~/$INSTALL_SUBPATH/$BUNDLE_NAME
@@ -260,19 +320,22 @@ WHAT IS AND IS NOT CHANGED
   Log:        ~/Library/Logs/$DISPLAY_NAME Installer.log
 READ_ME
 
-rm -f "$DIST_DIR/Aitum-Multistream-mac.zip"
-ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$DIST_DIR/Aitum-Multistream-mac.zip"
+rm -f "${DIST_DIR:?}/${ZIP_NAME:?}"
+ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$DIST_DIR/$ZIP_NAME"
 
-rm -rf "$WORK_DIR"
+rm -rf "${WORK_DIR:?}"
 
 say "done"
 note "$DIST_DIR/$PKG_NAME"
-note "$DIST_DIR/$(basename "$UNINSTALLER")"
-note "$DIST_DIR/Aitum-Multistream-mac.zip"
+note "$DIST_DIR/$UNINSTALLER_NAME"
+note "$DIST_DIR/$ZIP_NAME"
 if [[ -z "$installer_identity" ]]; then
 	printf '\n'
 	warn "the package is UNSIGNED and not notarized"
 	note "to fix: create a 'Developer ID Installer' certificate for team $TEAM_ID"
 	note "at developer.apple.com, install it in the login keychain, then re-run"
 	note "this script with --notarize --notary-profile <name>."
+elif ((!want_notarize)); then
+	printf '\n'
+	warn "signed, but NOT notarized - pass --notarize --notary-profile <name>"
 fi
