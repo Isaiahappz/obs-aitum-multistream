@@ -17,6 +17,7 @@ Needs reportlab:  python3 -m pip install reportlab
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 
@@ -25,14 +26,18 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageBreak,
-                                PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether,
+                                PageBreak, PageTemplate, Paragraph, Spacer, Table,
+                                TableStyle)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import content  # noqa: E402
 
 # One CSS pixel. Every font size below is in px and scaled by this.
 PX = inch / 96.0
+
+IMAGES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
 
 PAGE_WIDTH, PAGE_HEIGHT = letter
 MARGIN = 0.72 * inch
@@ -90,6 +95,7 @@ S = {
     "cell_head": style("cell_head", 12.5, 18, INK, "Helvetica-Bold"),
     "callout_head": style("callout_head", 14, 20, INK, "Helvetica-Bold", space_after=4),
     "callout": style("callout", 13, 20, INK),
+    "caption": style("caption", 11, 16, MUTED, space_before=4, space_after=4),
     "warn_head": style("warn_head", 14, 20, WARN_EDGE, "Helvetica-Bold", space_after=5),
     "warn": style("warn", 13, 20, INK, space_after=5),
 }
@@ -99,11 +105,27 @@ def para(text, key):
     return Paragraph(markup(text), S[key])
 
 
+def figure(name, caption, width):
+    """A screenshot under a step, at column width but never upscaled."""
+    path = os.path.join(IMAGES, name)
+    native_w, native_h = ImageReader(path).getSize()
+    w = min(width, native_w * PX)
+    picture = Image(path, width=w, height=w * native_h / native_w)
+    picture.hAlign = "LEFT"
+    return [Spacer(1, 7 * PX), picture, para(caption, "caption")]
+
+
 def steps_table(steps):
-    """Numbered steps: a filled badge on the left, the instruction on the right."""
+    """Numbered steps: a filled badge on the left, the instruction on the right.
+
+    A step is a string, or a dict with an image and its caption underneath.
+    """
     badge = 23 * PX
+    gutter = 13 * PX
+    body_width = CONTENT_WIDTH - badge - gutter
     rows, heights = [], []
-    for i, text in enumerate(steps, 1):
+    for i, step in enumerate(steps, 1):
+        text = step["text"] if isinstance(step, dict) else step
         number = Table(
             [[para(str(i), "step_num")]],
             colWidths=[badge], rowHeights=[badge], hAlign="LEFT",
@@ -117,15 +139,17 @@ def steps_table(steps):
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]),
         )
-        rows.append([number, para(text, "step")])
+        cell = [para(text, "step")]
+        if isinstance(step, dict) and step.get("image"):
+            cell += figure(step["image"], step.get("caption", ""), body_width)
+        rows.append([number, cell])
         heights.append(None)
     # Cell padding in reportlab comes out of the column width rather than
     # adding to it, so the gap after the badge is part of column 0's width and
     # the badge itself is left-aligned inside it.
-    gutter = 13 * PX
     return Table(
         rows,
-        colWidths=[badge + gutter, CONTENT_WIDTH - badge - gutter],
+        colWidths=[badge + gutter, body_width],
         rowHeights=heights,
         hAlign="LEFT",
         style=TableStyle([
@@ -190,7 +214,7 @@ def callout_box(heading, body):
     return boxed([para(heading, "callout_head"), para(body, "callout")], BAND, RULE)
 
 
-def cover(sections):
+def cover(sections, pages):
     story = [
         Spacer(1, 48 * PX),
         para(content.TITLE, "cover_title"),
@@ -199,9 +223,10 @@ def cover(sections):
     ]
     rows = [[para("", "toc_head"), para("Page", "toc_head")]]
     for i, section in enumerate(sections, 1):
-        # Section n is on page n + 1: the cover takes page 1.
+        # Measured on the first pass: a section that runs long pushes every
+        # section after it down a page, so these cannot be counted off.
         rows.append([para("%d. %s" % (i, section["title"]), "toc_num"),
-                     para(str(i + 1), "toc_page")])
+                     para(str(pages[i]), "toc_page")])
     story.append(Table(
         rows, colWidths=[CONTENT_WIDTH - 1.0 * inch, 1.0 * inch], hAlign="LEFT",
         style=TableStyle([
@@ -219,8 +244,9 @@ def cover(sections):
 
 
 def section_story(number, section):
-    story = [para("%d. %s" % (number, section["title"]), "section"),
-             para(section["intro"], "intro")]
+    heading = para("%d. %s" % (number, section["title"]), "section")
+    heading.section_number = number  # read back in Guide.afterFlowable
+    story = [heading, para(section["intro"], "intro")]
 
     if "warning" in section:
         heading, lines = section["warning"]
@@ -256,11 +282,17 @@ class Guide(BaseDocTemplate):
             subject=content.RUNNING_HEAD,
         )
         self.labels = labels
+        self.section_pages = {}
         body = Frame(MARGIN, MARGIN, CONTENT_WIDTH,
                      PAGE_HEIGHT - 2 * MARGIN - 26 * PX, id="body",
                      leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
         self.addPageTemplates([PageTemplate(id="page", frames=[body],
                                             onPage=self.decorate)])
+
+    def afterFlowable(self, flowable):
+        number = getattr(flowable, "section_number", None)
+        if number is not None:
+            self.section_pages[number] = self.page
 
     def decorate(self, canvas, doc):
         page = canvas.getPageNumber()
@@ -280,28 +312,45 @@ class Guide(BaseDocTemplate):
         canvas.restoreState()
 
 
+def render(target, chosen, with_cover, toc_pages, labels):
+    story = []
+    if with_cover:
+        story += cover(content.SECTIONS, toc_pages)
+    for number, section in chosen:
+        if story:
+            story.append(PageBreak())
+        story += section_story(number, section)
+
+    doc = Guide(target, labels)
+    doc.build(story)
+    return doc.section_pages, doc.page
+
+
 def build(path, only=None):
+    """Two passes: the first measures where each section lands, the second
+    draws the contents and the running heads from those real page numbers.
+
+    A section that runs onto a second page - section 6, with its screenshots -
+    moves every section after it, and a counted-off contents page would then
+    send a volunteer to the wrong page.
+    """
     chosen = [(i, s) for i, s in enumerate(content.SECTIONS, 1)
               if only is None or i in only]
     if not chosen:
         raise SystemExit("no sections selected")
 
-    story = []
+    with_cover = only is None
+    guess = {i: i + 1 for i in range(1, len(content.SECTIONS) + 1)}
+    starts, total = render(io.BytesIO(), chosen, with_cover, guess, {})
+
     labels = {}
-    page = 1
+    ordered = sorted(starts.items(), key=lambda kv: kv[1])
+    for i, (number, first) in enumerate(ordered):
+        last = ordered[i + 1][1] - 1 if i + 1 < len(ordered) else total
+        for page in range(first, last + 1):
+            labels[page] = str(page) if with_cover else "%d." % number
 
-    if only is None:
-        story += cover(content.SECTIONS)
-        page += 1
-
-    for index, (number, section) in enumerate(chosen):
-        if story:
-            story.append(PageBreak())
-        labels[page] = str(page) if only is None else "%d." % number
-        story += section_story(number, section)
-        page += 1
-
-    Guide(path, labels).build(story)
+    render(path, chosen, with_cover, starts, labels)
     return path
 
 

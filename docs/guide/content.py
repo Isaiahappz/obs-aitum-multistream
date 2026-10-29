@@ -58,24 +58,6 @@ SECTIONS = [
         "title": "Update OBS Studio",
         "intro": ("Do this before installing anything else. The Aitum installer will "
                   "refuse to run on older OBS versions."),
-        "warning": (
-            "Before updating to OBS 33",
-            [
-                "Two leftovers from the old setup stop working in OBS 33. Remove them "
-                "first, while you are still on your current version.",
-                "<b>The old Bible Verse dock.</b> In the menu bar click <b>Docks</b> "
-                "ARROW <b>Custom Browser Docks</b>. Remove only the row named exactly "
-                "<b>Bible Verse</b>: clear both of its boxes or click the minus button "
-                "beside it, then click <b>Apply</b>. Leave every other row alone. If "
-                "you see <b>IsraelTeach Dock</b>, keep it - that one is still in use.",
-                "<b>The old lower third source.</b> In each scene, look for a Browser "
-                "source whose address begins with <b>http://localhost:9876</b>. "
-                "Right-click it and choose <b>Remove</b>.",
-                "Both belonged to the old verse overlay. Nothing else uses them, and "
-                "leaving them in place can make OBS 33 open with an empty panel or a "
-                "black box on screen.",
-            ],
-        ),
         "steps": [
             "Open OBS Studio. In the menu bar click <b>OBS Studio</b> ARROW "
             "<b>About OBS Studio</b> and note the version number.",
@@ -91,9 +73,10 @@ SECTIONS = [
         "callout": (
             "If a plugin warning appears after updating",
             "OBS may say it could not load all third-party plugins. Click "
-            "<b>Open Plugin Manager</b>. If <b>obs-shaderfilter</b> shows an Error, "
-            "turn it off and click <b>Save</b>. It is only used for optional glass "
-            "effects and is not needed for streaming.",
+            "<b>Open Plugin Manager</b> to see which one. Anything that shows an "
+            "Error and is not <b>Aitum Multistream</b> can be turned off with "
+            "<b>Save</b> - streaming does not need it. If <b>Aitum Multistream</b> "
+            "is the one erroring, run the installer again.",
         ),
     },
     {
@@ -179,21 +162,35 @@ SECTIONS = [
                 "In <b>Settings</b> ARROW <b>Stream</b>, OBS offers <b>Connect "
                 "Account</b> and <b>Use Stream Key</b>. Always choose "
                 "<b>Use Stream Key</b>.",
-                "<b>Connect Account</b> freezes OBS 33 on macOS. The window stops "
-                "responding and the only way out is to force quit, which loses "
-                "anything you have not saved.",
+                "Being signed in to YouTube twice is what freezes OBS 33 on "
+                "macOS: a <b>Connect Account</b> sign-in on top of a stream key. The "
+                "window stops responding and the only way out is to force quit, "
+                "which loses anything you have not saved.",
+                "One sign-in, and let it be the stream key. Use <b>Stream Key</b> "
+                "only.",
             ],
         ),
         "steps": [
             "In your browser open <b>studio.youtube.com</b> and click <b>Create</b> "
             "ARROW <b>Go live</b>. Choose <b>Now</b> and <b>Streaming software</b>.",
-            "Open the <b>Stream</b> tab. Under <b>Stream key</b>, find "
-            "<b>Default stream key</b> and click <b>Copy</b>. Do not click the circular "
-            "arrow; that resets the key.",
+            {
+                "text": "Open the <b>Stream</b> tab. At the top of the video preview "
+                        "click the <b>Key</b> box and choose <b>Default stream key "
+                        "(RTMP, Variable)</b>. Leave the other two alone.",
+                "image": "yt-key-dropdown-annotated.png",
+                "caption": "YouTube Studio, October 2026 \u2014 layout may change",
+            },
+            {
+                "text": "Click the copy icon beside that box to copy the key. Do not "
+                        "click the circular arrow next to it - that resets the key and "
+                        "stops anyone already streaming with it.",
+                "image": "yt-key-row-annotated.png",
+                "caption": "YouTube Studio, October 2026 \u2014 layout may change",
+            },
             "In OBS open <b>Settings</b> ARROW <b>Stream</b>. Set <b>Service</b> to "
             "<b>YouTube - RTMPS</b>.",
-            "Click <b>Use Stream Key</b>. <b>Do not use Connect Account</b> - it "
-            "freezes OBS 33 on macOS.",
+            "Click <b>Use Stream Key</b>. <b>Do not use Connect Account</b> as "
+            "well - signing in to YouTube twice freezes OBS 33 on macOS.",
             "Paste the key into <b>Stream Key</b>, choose <b>Primary YouTube ingest "
             "server</b>, and click <b>OK</b>.",
             "In YouTube Studio turn <b>Dual stream</b> off unless you have been asked "
@@ -324,8 +321,9 @@ SECTIONS = [
                 ["OBS closes the moment you go live",
                  "OBS is too old for this macOS. Update to 33.0 or newer (section 2)."],
                 ["OBS freezes when connecting YouTube",
-                 "You clicked Connect Account. Force quit OBS, reopen it, and use "
-                 "Use Stream Key instead (section 6)."],
+                 "You signed in to YouTube twice - Connect Account on top of a stream "
+                 "key. Force quit OBS, reopen it, and use Use Stream Key only "
+                 "(section 6)."],
                 ["The installer says you have a test version of OBS",
                  "You are on a beta or release candidate build. Install the regular "
                  "release of OBS 33.0 or newer, then run the installer again."],
