@@ -64,9 +64,10 @@ SECTIONS = [
                 "Two leftovers from the old setup stop working in OBS 33. Remove them "
                 "first, while you are still on your current version.",
                 "<b>The old Bible Verse dock.</b> In the menu bar click <b>Docks</b> "
-                "ARROW <b>Custom Browser Docks</b>. If you see a row named "
-                "<b>Bible Verse</b>, clear both of its boxes or click the minus "
-                "button beside it, then click <b>Apply</b>.",
+                "ARROW <b>Custom Browser Docks</b>. Remove only the row named exactly "
+                "<b>Bible Verse</b>: clear both of its boxes or click the minus button "
+                "beside it, then click <b>Apply</b>. Leave every other row alone. If "
+                "you see <b>IsraelTeach Dock</b>, keep it - that one is still in use.",
                 "<b>The old lower third source.</b> In each scene, look for a Browser "
                 "source whose address begins with <b>http://localhost:9876</b>. "
                 "Right-click it and choose <b>Remove</b>.",
