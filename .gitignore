@@ -16,3 +16,7 @@
 version.h
 cmake/.CMakeBuildNumber
 .ccache.conf
+
+# the guide builder leaves these behind
+__pycache__/
+*.pyc

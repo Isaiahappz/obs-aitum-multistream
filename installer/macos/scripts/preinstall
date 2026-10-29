@@ -1,9 +1,15 @@
 #!/bin/sh
 # Aitum Multistream - installer pre-flight checks.
 #
-# Refuses the install unless OBS Studio 33.0.0 or newer is on this Mac, asks
-# the operator to quit OBS first, then clears out any older copy of the plugin
-# so OBS can never load two of them.
+# Refuses the install unless a release build of OBS Studio 33.0.0 or newer is
+# on this Mac, asks the operator to quit OBS first, then clears out any older
+# copy of the plugin so OBS can never load two of them. Beta and release
+# candidate builds of OBS are refused as well, unless
+# AITUM_ALLOW_PRERELEASE=1 is set.
+#
+# Nothing here calls lipo, otool, xcrun or any other Xcode Command Line Tools
+# stub: on a Mac without those tools they do not fail quietly, they raise the
+# "install the command line developer tools" prompt in front of the volunteer.
 #
 # Nothing here touches OBS settings: basic/ (profiles, scenes, service.json),
 # global.ini, user.ini and plugin_config/ are never read or written. Stream
@@ -17,6 +23,12 @@ set -u
 MIN_VERSION="33.0.0"
 MIN_DISPLAY="33.0"
 DOWNLOAD_PAGE="https://obsproject.com/download"
+# A -beta or -rc build of OBS is a moving target: it can change behaviour from
+# one build to the next, and it is not what anyone should be running during a
+# service. Those are refused unless whoever is testing asks for them with
+# AITUM_ALLOW_PRERELEASE=1, which only reaches these scripts when the package
+# is installed from the command line, never from a double-click.
+ALLOW_PRERELEASE="${AITUM_ALLOW_PRERELEASE:-0}"
 PLUGIN_NAME="aitum-multistream"
 OBS_BUNDLE_ID="com.obsproject.obs-studio"
 DIALOG_TITLE="Aitum Multistream"
@@ -102,6 +114,15 @@ version_number() {
 		{ printf "%d\n", ($1 + 0) * 1000000 + ($2 + 0) * 1000 + ($3 + 0) }'
 }
 
+# "33.0.0-rc3" and "33.0.0-beta6" both reduce to 33.0.0 above, so the suffix
+# has to be looked for in the string itself.
+is_prerelease() {
+	case "$(printf '%s' "${1:-}" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
+		*alpha* | *beta* | *-rc* | *rc[0-9]* | *-dev* | *candidate*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 obs_version_at() {
 	_plist="$1/Contents/Info.plist"
 	[ -f "$_plist" ] || return 1
@@ -123,9 +144,15 @@ else
 $target_home/Applications/OBS.app"
 fi
 
+# The best release build found, and separately the best test build, so a beta
+# sitting next to a good release cannot shoulder it aside just by having a
+# higher version number.
 best_path=''
 best_version=''
 best_number=0
+pre_path=''
+pre_version=''
+pre_number=0
 
 consider() {
 	_app="$1"
@@ -135,11 +162,20 @@ consider() {
 		return 0
 	}
 	_num=$(version_number "$_ver")
-	log "found OBS $_ver at $_app"
-	if [ "$_num" -gt "$best_number" ]; then
-		best_path="$_app"
-		best_version="$_ver"
-		best_number="$_num"
+	if is_prerelease "$_ver"; then
+		log "found OBS $_ver at $_app (a test build)"
+		if [ "$_num" -gt "$pre_number" ]; then
+			pre_path="$_app"
+			pre_version="$_ver"
+			pre_number="$_num"
+		fi
+	else
+		log "found OBS $_ver at $_app"
+		if [ "$_num" -gt "$best_number" ]; then
+			best_path="$_app"
+			best_version="$_ver"
+			best_number="$_num"
+		fi
 	fi
 }
 
@@ -155,7 +191,7 @@ done
 IFS="$oldIFS"
 
 # Last resort: Spotlight, in case OBS lives somewhere unusual.
-if [ -z "$best_path" ] && [ -z "${AITUM_OBS_APP_PATHS:-}" ]; then
+if [ -z "$best_path" ] && [ -z "$pre_path" ] && [ -z "${AITUM_OBS_APP_PATHS:-}" ]; then
 	spotlight=$(/usr/bin/mdfind "kMDItemCFBundleIdentifier == '$OBS_BUNDLE_ID'" 2>/dev/null || printf '')
 	oldIFS="$IFS"
 	IFS='
@@ -174,17 +210,48 @@ fi
 
 min_number=$(version_number "$MIN_VERSION")
 
-if [ -z "$best_path" ] || [ "$best_number" -lt "$min_number" ]; then
-	if [ -z "$best_path" ]; then
-		found_line="No copy of OBS Studio was found on this Mac."
-		log "OBS not found - blocking install"
-	else
-		found_line="This Mac has OBS Studio $best_version."
-		log "OBS $best_version is older than $MIN_VERSION - blocking install"
-	fi
-	message="OBS Studio $MIN_DISPLAY or newer is required. Please update OBS, then run this installer again.
+# Asked to, take the test build as if it were a release.
+if [ "$ALLOW_PRERELEASE" = "1" ] && [ "$pre_number" -gt "$best_number" ]; then
+	log "AITUM_ALLOW_PRERELEASE=1 - accepting the test build OBS $pre_version"
+	best_path="$pre_path"
+	best_version="$pre_version"
+	best_number="$pre_number"
+	pre_path=''
+	pre_number=0
+fi
 
-$found_line"
+if [ -z "$best_path" ] || [ "$best_number" -lt "$min_number" ]; then
+	if [ "$pre_number" -ge "$min_number" ]; then
+		# New enough, but a beta or a release candidate.
+		why="OBS $pre_version is a test build"
+		message="This Mac has a test version of OBS Studio ($pre_version).
+
+Test versions of OBS change from one week to the next, so the plugin is not installed onto them.
+
+Please install the regular release of OBS Studio $MIN_DISPLAY or newer, then run this installer again."
+	elif [ -n "$best_path" ] || [ -n "$pre_path" ]; then
+		# Something is here, it is just too old. Name the newest of them.
+		if [ "$pre_number" -gt "$best_number" ]; then
+			shown_version="$pre_version"
+		else
+			shown_version="$best_version"
+		fi
+		why="OBS $shown_version is older than $MIN_VERSION"
+		message="This Mac has OBS Studio $shown_version, which is too old for this plugin.
+
+Aitum Multistream needs OBS Studio $MIN_DISPLAY or newer.
+
+Please update OBS Studio, then run this installer again."
+	else
+		why="OBS not found"
+		message="OBS Studio could not be found on this Mac.
+
+Aitum Multistream is an add-on for OBS Studio, so OBS has to be installed first.
+
+Please install OBS Studio $MIN_DISPLAY or newer, then run this installer again."
+	fi
+
+	log "$why - blocking install"
 	clicked=$(ask "$message" "$ICON_STOP" "Cancel" "Open OBS Download Page")
 	if [ "$clicked" = "Open OBS Download Page" ]; then
 		as_user /usr/bin/open "$DOWNLOAD_PAGE" >/dev/null 2>&1 || true

@@ -80,9 +80,64 @@ fi
 
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist" 2>/dev/null ||
 	printf 'unknown')
-arches=$(/usr/bin/lipo -archs "$bundle/Contents/MacOS/$PLUGIN_NAME" 2>/dev/null || printf 'unknown')
 
-say "installed Aitum Multistream $version ($arches) at $bundle"
+# --- which architectures are in the bundle? --------------------------------
+# `lipo -archs` would answer this in one word, but /usr/bin/lipo is a stub that
+# forwards to the Xcode Command Line Tools. On a Mac without them it does not
+# just fail - it pops the "install the command line developer tools" prompt,
+# which is the last thing a volunteer should be asked mid-install. uname and
+# /usr/bin/file are part of macOS itself and never prompt.
+#
+# `file -b` describes a universal binary on its first line, naming each slice
+# in brackets:
+#   Mach-O universal binary with 2 architectures: [x86_64:...] [arm64:...]
+# and a single-architecture binary as:
+#   Mach-O 64-bit bundle arm64
+bundle_arches() {
+	_bin="$1"
+	[ -f "$_bin" ] || {
+		printf 'unknown'
+		return
+	}
+	/usr/bin/file -b "$_bin" 2>/dev/null | /usr/bin/sed -n '1p' | /usr/bin/awk '
+		/Mach-O universal/ {
+			while (match($0, /\[[A-Za-z0-9_.]+:/)) {
+				name = substr($0, RSTART + 1, RLENGTH - 2)
+				if (!(name in seen)) {
+					seen[name] = 1
+					list = list (list ? " " : "") name
+				}
+				$0 = substr($0, RSTART + RLENGTH)
+			}
+			next
+		}
+		/Mach-O/ { list = $NF }
+		END { printf "%s", (list ? list : "unknown") }'
+}
+
+this_arch=$(/usr/bin/uname -m 2>/dev/null || printf 'unknown')
+arches=$(bundle_arches "$bundle/Contents/MacOS/$PLUGIN_NAME")
+
+say "installed Aitum Multistream $version at $bundle"
+say "this Mac is $this_arch; the plugin was built for: $arches"
+
+# Only speak up when we positively read the slices and this Mac's is not among
+# them. Anything we could not parse is logged above and left at that, rather
+# than worrying a volunteer over a bundle that is probably fine.
+if [ "$arches" != "unknown" ] && [ "$this_arch" != "unknown" ]; then
+	case " $arches " in
+		*" $this_arch "*) say "architecture check passed" ;;
+		*)
+			say "WARNING: nothing in this bundle matches $this_arch - OBS will not load it"
+			tell_user "This copy of the plugin was not built for this Mac.
+
+This Mac is $this_arch, and the plugin contains: $arches
+
+Please ask for an installer built for this Mac." "$ICON_STOP"
+			;;
+	esac
+fi
+
 say "OBS settings untouched: basic/, global.ini, user.ini and plugin_config/ were not written"
 
 exit 0

@@ -4,6 +4,7 @@
 #   scripts/build-mac-installer.sh [options]
 #
 #     --skip-build            Package whatever is already in build_macos/
+#     --skip-guide            Reuse dist/OBS-Multistream-Guide.pdf as it is
 #     --no-sign               Do not sign the plugin, the uninstaller or the package
 #     --notarize              Submit to Apple and staple the tickets
 #     --notary-profile NAME   notarytool keychain profile (default: $NOTARY_PROFILE)
@@ -13,11 +14,12 @@
 # Produces, in dist/:
 #     Aitum Multistream Installer.pkg
 #     Uninstall Aitum Multistream.app
-#     Aitum-Multistream-mac.zip        both of the above, plus a README
+#     OBS-Multistream-Guide.pdf        the volunteer guide
+#     Aitum-Multistream-mac.zip        all three of the above, plus a README
 #
 # The package installs into the home folder of whoever runs it, so no
-# administrator password is needed, and it refuses to install unless OBS
-# Studio 33.0 or newer is present.
+# administrator password is needed, and it refuses to install unless a release
+# build of OBS Studio 33.0 or newer is present.
 
 set -euo pipefail
 
@@ -35,6 +37,7 @@ MACOS_MIN="13.0"
 CONFIGURATION="RelWithDebInfo"
 
 skip_build=0
+skip_guide=0
 want_sign=1
 want_notarize=0
 notary_profile="${NOTARY_PROFILE:-}"
@@ -50,6 +53,7 @@ die() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--skip-build) skip_build=1 ;;
+		--skip-guide) skip_guide=1 ;;
 		--no-sign) want_sign=0 ;;
 		--notarize) want_notarize=1 ;;
 		--notary-profile)
@@ -61,7 +65,7 @@ while [[ $# -gt 0 ]]; do
 			shift
 			;;
 		-h | --help)
-			sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+			sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 			exit 0
 			;;
 		*) die "unknown option: $1" ;;
@@ -98,6 +102,8 @@ BUNDLE_NAME="$PLUGIN_NAME.plugin"
 UNINSTALLER_NAME="Uninstall $DISPLAY_NAME.app"
 UNINSTALLER_ID="$BUNDLE_ID.uninstaller"
 ZIP_NAME="Aitum-Multistream-mac.zip"
+GUIDE_NAME="OBS-Multistream-Guide.pdf"
+GUIDE_BUILDER="$SOURCE_DIR/docs/guide/build-guide.py"
 # The one location OBS 33 loads third-party plugins from on macOS, relative to
 # the install domain (the user's home folder).
 INSTALL_SUBPATH="Library/Application Support/obs-studio/plugins"
@@ -155,7 +161,30 @@ PLUGIN_BUNDLE="$BUILD_DIR/$CONFIGURATION/$BUNDLE_NAME"
 [[ -d "$PLUGIN_BUNDLE" ]] || die "no plugin bundle at $PLUGIN_BUNDLE"
 
 # Refuse to ship a single-architecture build - half the volunteers are on Intel.
-arches="$(lipo -archs "$PLUGIN_BUNDLE/Contents/MacOS/$PLUGIN_NAME")"
+#
+# Read with /usr/bin/file rather than lipo. lipo lives behind an Xcode Command
+# Line Tools stub, and the same reading has to work in postinstall, which runs
+# on volunteers' Macs where that stub would raise the "install the command
+# line developer tools" prompt. Using one method in both places means the
+# check that gates the build is the check that runs on their machines.
+bundle_arches() {
+	/usr/bin/file -b "$1" | /usr/bin/sed -n '1p' | /usr/bin/awk '
+		/Mach-O universal/ {
+			while (match($0, /\[[A-Za-z0-9_.]+:/)) {
+				name = substr($0, RSTART + 1, RLENGTH - 2)
+				if (!(name in seen)) {
+					seen[name] = 1
+					list = list (list ? " " : "") name
+				}
+				$0 = substr($0, RSTART + RLENGTH)
+			}
+			next
+		}
+		/Mach-O/ { list = $NF }
+		END { printf "%s", (list ? list : "unknown") }'
+}
+
+arches="$(bundle_arches "$PLUGIN_BUNDLE/Contents/MacOS/$PLUGIN_NAME")"
 say "built architectures: $arches"
 for required in arm64 x86_64; do
 	[[ " $arches " == *" $required "* ]] || die "the bundle is missing the $required slice (got: $arches)"
@@ -285,6 +314,39 @@ if ((want_notarize)); then
 	xcrun stapler staple "$UNINSTALLER_APP"
 fi
 
+# ------------------------------------------------------------------- guide --
+# The volunteer guide travels in the zip alongside the installer, so whoever
+# hands it out has one file to send. Its source is docs/guide/build-guide.py -
+# keep it there, in the repository, rather than regenerating it from memory.
+GUIDE_PDF="$DIST_DIR/$GUIDE_NAME"
+mkdir -p "${DIST_DIR:?}"
+
+if ((skip_guide)); then
+	say "skipping the guide"
+	[[ -f "$GUIDE_PDF" ]] || die "--skip-guide needs an existing $GUIDE_PDF"
+else
+	say "building $GUIDE_NAME"
+	[[ -f "$GUIDE_BUILDER" ]] || die "no guide builder at $GUIDE_BUILDER"
+
+	# reportlab is not part of any system Python, so find an interpreter that
+	# actually has it rather than guessing.
+	guide_python=""
+	for candidate in "${GUIDE_PYTHON:-}" python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+		[[ -n "$candidate" ]] || continue
+		if command -v "$candidate" > /dev/null 2>&1 &&
+			"$candidate" -c 'import reportlab' > /dev/null 2>&1; then
+			guide_python="$candidate"
+			break
+		fi
+	done
+	[[ -n "$guide_python" ]] ||
+		die "no Python with reportlab installed - 'python3 -m pip install reportlab', or pass --skip-guide"
+
+	"$guide_python" "$GUIDE_BUILDER" --output "$GUIDE_PDF"
+	[[ -f "$GUIDE_PDF" ]] || die "the guide builder produced no $GUIDE_NAME"
+	note "$(basename "$guide_python") / reportlab $("$guide_python" -c 'import reportlab; print(reportlab.Version)')"
+fi
+
 # --------------------------------------------------------------------- zip --
 say "assembling dist/"
 rm -rf "${DIST_DIR:?}/${UNINSTALLER_NAME:?}"
@@ -295,13 +357,20 @@ rm -rf "${WORK_DIR:?}/zip"
 mkdir -p "$STAGE"
 ditto "$DIST_DIR/$PKG_NAME" "$STAGE/$PKG_NAME"
 ditto "$UNINSTALLER_APP" "$STAGE/$UNINSTALLER_NAME"
+ditto "$GUIDE_PDF" "$STAGE/$GUIDE_NAME"
 
 cat > "$STAGE/READ ME FIRST.txt" <<READ_ME
 $DISPLAY_NAME $VERSION for OBS Studio
 
+START HERE
+  "$GUIDE_NAME" is the step-by-step guide: updating OBS, installing
+  this plugin, and going live on YouTube and Facebook. Read section 2 before
+  you update OBS - there are two old items to remove first.
+
 TO INSTALL
   1. Make sure OBS Studio 33.0 or newer is installed. The installer checks,
-     and will stop if the version is older.
+     and will stop if the version is older, or if it is a beta or release
+     candidate build of OBS.
   2. Quit OBS Studio.
   3. Open "$PKG_NAME" and follow the steps.
      No administrator password is needed.
@@ -318,6 +387,8 @@ WHAT IS AND IS NOT CHANGED
   Untouched:  your scenes, sources, profiles, stream keys and saved outputs,
               and every other OBS plugin.
   Log:        ~/Library/Logs/$DISPLAY_NAME Installer.log
+              It records the OBS version that was found, where the plugin
+              went, and which architectures it was built for.
 READ_ME
 
 rm -f "${DIST_DIR:?}/${ZIP_NAME:?}"
@@ -328,6 +399,7 @@ rm -rf "${WORK_DIR:?}"
 say "done"
 note "$DIST_DIR/$PKG_NAME"
 note "$DIST_DIR/$UNINSTALLER_NAME"
+note "$GUIDE_PDF"
 note "$DIST_DIR/$ZIP_NAME"
 if [[ -z "$installer_identity" ]]; then
 	printf '\n'
